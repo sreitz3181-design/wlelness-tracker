@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #24322B;
+  --paper: #FBFAF6;
+}
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+h1, h2, h3, .font-display {
+  font-family: 'Fraunces', ui-serif, Georgia, serif;
+}
+
+.font-mono, .tabular {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rhythm arc — the signature element: a quiet dawn-to-dusk gradient
+   used only on the day's current-time marker, nowhere else. */
+.rhythm-arc {
+  background: linear-gradient(90deg, #E8A15D 0%, #C77B3F 22%, #5B8570 50%, #3B4C68 78%, #28374D 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
