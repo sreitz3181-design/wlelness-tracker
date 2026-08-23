@@ -22,14 +22,13 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
 
 ## Next steps to make it real
 
-1. **Create a Supabase project** and run `supabase/schema.sql` in the SQL editor. It covers recipes, weekly plans, sermon notes, daily logs (sleep/stress/workout/nutrition/evening ratings), and tasks — all scoped with row-level security to one user.
-2. **Set env vars** — copy `.env.local.example` to `.env.local` and fill in:
-   - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` (from your Supabase project settings)
-   - `ANTHROPIC_API_KEY` (for the stress-advice, scripture-selection, and sermon-theme coaching logic — same pattern as you.accomplished's AI coaching)
-3. **Swap `mockData.js` imports for `supabase` queries** in each page — `lib/supabaseClient.js` is already set up, just unused so far. Each mock export's shape matches a `daily_logs` column or table, so this should be a fairly mechanical swap.
-4. **Email reminders** — pick a transactional email provider (Resend is the simplest to pair with Next.js) and a cron mechanism (Vercel Cron or Supabase Edge Functions) for the four scheduled check-ins: 8:30 AM, 8:00 PM, Friday 5:00 PM, Sunday 1:00 PM.
-5. **Google Health API** (steps/active minutes/calories, once you're ready) — not Google Fit, which stopped accepting new integrations in 2024 and is being retired. `health.googleapis.com` is the live successor; same OAuth2 pattern as the Google Calendar integration in you.accomplished.
-6. **Deploy** — Vercel is the natural fit for a Next.js + Supabase app and solves the "not on mobile" problem this was built to fix.
+1. **Create a Supabase project** and run `supabase/schema.sql` in the SQL editor. ✅ Done
+2. **Set env vars** — handled automatically if you used the Vercel↔Supabase integration. Just remember: `NEXT_PUBLIC_*` values are baked in at *build* time, so redeploy after they're added or changed.
+3. **Create your one user account** — Supabase dashboard → Authentication → Users → Add user. Enter an email and password; this is the only account the app supports (it's single-user by design, no public sign-up). Use that email/password on the `/login` screen.
+4. **The Today screen is now wired to real data** — sleep rating, stress rating, and the stress follow-up note save to `daily_logs` as you tap/type. Yesterday's ratings and today's tasks read from the same tables. The other four screens (Workout, Nutrition, Weekly Planner, Health Dashboard) still show placeholder data from `lib/mockData.js` — same upsert pattern as `app/page.js`, just needs to be repeated per screen.
+5. **Email reminders** — pick a transactional email provider (Resend is the simplest to pair with Next.js) and a cron mechanism (Vercel Cron) for the four scheduled check-ins: 8:30 AM, 8:00 PM, Friday 5:00 PM, Sunday 1:00 PM.
+6. **Google Health API** (steps/active minutes/calories, once you're ready) — not Google Fit, which stopped accepting new integrations in 2024 and is being retired. `health.googleapis.com` is the live successor; same OAuth2 pattern as the Google Calendar integration in you.accomplished.
+7. **AI coaching** — scripture selection, stress advice, and sermon-theme reflections still come from `lib/mockData.js` placeholders. Wiring these to the Anthropic API is the same call pattern as you.accomplished's coaching pipeline.
 
 ## Structure
 

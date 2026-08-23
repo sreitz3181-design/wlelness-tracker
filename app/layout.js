@@ -1,5 +1,6 @@
 import './globals.css'
 import NavBar from '../components/NavBar'
+import AuthGate from '../components/AuthGate'
 
 export const metadata = {
   title: 'Wellness Tracker',
@@ -18,10 +19,12 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body className="min-h-screen bg-paper text-ink">
-        <div className="mx-auto max-w-md pb-24 md:max-w-2xl">
-          {children}
-        </div>
-        <NavBar />
+        <AuthGate>
+          <div className="mx-auto max-w-md pb-24 md:max-w-2xl">
+            {children}
+          </div>
+          <NavBar />
+        </AuthGate>
       </body>
     </html>
   )
