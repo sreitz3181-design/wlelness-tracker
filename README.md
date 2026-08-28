@@ -24,11 +24,18 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
 
 1. **Create a Supabase project** and run `supabase/schema.sql` in the SQL editor. ✅ Done
 2. **Set env vars** — handled automatically if you used the Vercel↔Supabase integration. Just remember: `NEXT_PUBLIC_*` values are baked in at *build* time, so redeploy after they're added or changed.
-3. **Create your one user account** — Supabase dashboard → Authentication → Users → Add user. Enter an email and password; this is the only account the app supports (it's single-user by design, no public sign-up). Use that email/password on the `/login` screen.
-4. **The Today screen is now wired to real data** — sleep rating, stress rating, and the stress follow-up note save to `daily_logs` as you tap/type. Yesterday's ratings and today's tasks read from the same tables. The other four screens (Workout, Nutrition, Weekly Planner, Health Dashboard) still show placeholder data from `lib/mockData.js` — same upsert pattern as `app/page.js`, just needs to be repeated per screen.
-5. **Email reminders** — pick a transactional email provider (Resend is the simplest to pair with Next.js) and a cron mechanism (Vercel Cron) for the four scheduled check-ins: 8:30 AM, 8:00 PM, Friday 5:00 PM, Sunday 1:00 PM.
-6. **Google Health API** (steps/active minutes/calories, once you're ready) — not Google Fit, which stopped accepting new integrations in 2024 and is being retired. `health.googleapis.com` is the live successor; same OAuth2 pattern as the Google Calendar integration in you.accomplished.
-7. **AI coaching** — scripture selection, stress advice, and sermon-theme reflections still come from `lib/mockData.js` placeholders. Wiring these to the Anthropic API is the same call pattern as you.accomplished's coaching pipeline.
+3. **Create your one user account** — Supabase dashboard → Authentication → Users → Add user. ✅ Done
+4. **Seed your recipes** — run `supabase/seed_recipes.sql` once in the SQL editor to load your 13 meals into the `recipes` table. Until you do this, the Weekly Planner falls back to the same placeholder list it always showed.
+5. **All five screens are now wired to real Supabase data:**
+   - **Today** — sleep, stress (+ follow-up note), yesterday's ratings, open tasks
+   - **Workout** — tap Strength/Cardio/Rest to set the day (defaults to a Mon-strength/Tue-cardio alternation, override anytime), log your own exercises with planned vs. actual, daily step/active-minute/calorie-burn goals vs. actual
+   - **Nutrition** — calories by meal and water intake, goal vs. actual
+   - **Weekly Planner** — pick 7 meals, generate a deduplicated shopping list, paste in sermon notes (theme extraction is still a placeholder — see AI coaching below)
+   - **Health Dashboard** — real week/month averages computed from your actual logs, not sample data
+6. **Evening check-in was intentionally dropped** — the app is morning-only by design now. The Health Dashboard reflects that: it averages Stress and Sleep (both collected each morning) rather than the Physical/Mental/Spiritual ratings that would've needed an evening prompt. Those three columns still exist in `daily_logs` — harmless, just unused — in case you want them back later.
+7. **Email reminders** — pick a transactional email provider (Resend is the simplest to pair with Next.js) and a cron mechanism (Vercel Cron) for the four scheduled check-ins: 8:30 AM, 8:00 PM, Friday 5:00 PM, Sunday 1:00 PM.
+8. **Google Health API** (steps/active minutes/calories, once you're ready) — not Google Fit, which stopped accepting new integrations in 2024 and is being retired. `health.googleapis.com` is the live successor; same OAuth2 pattern as the Google Calendar integration in you.accomplished.
+9. **AI coaching** — scripture selection, stress advice, and sermon-theme reflections still come from `lib/mockData.js` placeholders. Wiring these to the Anthropic API is the same call pattern as you.accomplished's coaching pipeline.
 
 ## Structure
 

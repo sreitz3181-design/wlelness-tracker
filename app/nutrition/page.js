@@ -1,7 +1,58 @@
-import { Card, SectionLabel, PlannedActualRow } from '../../components/ui'
-import { todaysNutrition, waterGoalOz } from '../../lib/mockData'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { Card, SectionLabel } from '../../components/ui'
+import { supabase } from '../../lib/supabaseClient'
+import { todayISO } from '../../lib/dates'
+import { getCurrentUserId, saveTodayFields } from '../../lib/dailyLog'
+
+const MEALS = [
+  { key: 'breakfast', label: 'Breakfast', goal: 500 },
+  { key: 'lunch', label: 'Lunch', goal: 700 },
+  { key: 'dinner', label: 'Dinner', goal: 800 },
+  { key: 'snacks', label: 'Snacks', goal: 300 },
+]
+const WATER_GOAL_OZ = 100
 
 export default function NutritionPage() {
+  const [userId, setUserId] = useState(null)
+  const [actual, setActual] = useState({})
+  const [water, setWater] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const uid = await getCurrentUserId()
+      setUserId(uid)
+      if (!uid) return
+      const { data } = await supabase
+        .from('daily_logs')
+        .select('nutrition_actual')
+        .eq('user_id', uid)
+        .eq('log_date', todayISO())
+        .maybeSingle()
+      setActual(data?.nutrition_actual || {})
+      setWater(data?.nutrition_actual?.water_oz ?? '')
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  async function saveMeal(key, value) {
+    const next = { ...actual, [key]: value === '' ? null : Number(value) }
+    setActual(next)
+    await saveTodayFields(userId, { nutrition_actual: next })
+  }
+
+  async function saveWater(value) {
+    setWater(value)
+    const next = { ...actual, water_oz: value === '' ? null : Number(value) }
+    setActual(next)
+    await saveTodayFields(userId, { nutrition_actual: next })
+  }
+
+  if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading nutrition…</main>
+
   return (
     <main className="px-4 pt-8">
       <p className="text-xs uppercase tracking-wide text-ink/40">Today</p>
@@ -18,8 +69,19 @@ export default function NutritionPage() {
             </tr>
           </thead>
           <tbody>
-            {todaysNutrition.map((m) => (
-              <PlannedActualRow key={m.meal} label={m.meal} planned={m.goalCalories} actual={m.actualCalories} unit=" cal" />
+            {MEALS.map((m) => (
+              <tr key={m.key} className="border-b border-sage-light/70 last:border-0">
+                <td className="py-2 text-sm">{m.label}</td>
+                <td className="py-2 px-2 text-right font-mono text-sm text-ink/60">{m.goal} cal</td>
+                <td className="py-2 pl-2 text-right">
+                  <input
+                    type="number"
+                    value={actual[m.key] ?? ''}
+                    onChange={(e) => saveMeal(m.key, e.target.value)}
+                    className="w-20 rounded-card border border-sage-light bg-white/70 px-2 py-1 text-right font-mono text-sm"
+                  />
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -27,11 +89,18 @@ export default function NutritionPage() {
 
       <Card className="mt-4">
         <SectionLabel>Water intake</SectionLabel>
-        <table className="w-full">
-          <tbody>
-            <PlannedActualRow label="Water" planned={waterGoalOz} actual={null} unit=" oz" />
-          </tbody>
-        </table>
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Water</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm text-ink/60">Goal: {WATER_GOAL_OZ} oz</span>
+            <input
+              type="number"
+              value={water}
+              onChange={(e) => saveWater(e.target.value)}
+              className="w-20 rounded-card border border-sage-light bg-white/70 px-2 py-1 text-right font-mono text-sm"
+            />
+          </div>
+        </div>
       </Card>
 
       <p className="mt-4 text-xs text-ink/40">

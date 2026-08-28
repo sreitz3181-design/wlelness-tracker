@@ -4,12 +4,11 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, SectionLabel, RatingScale } from '../components/ui'
 import { supabase } from '../lib/supabaseClient'
-import { todayISO, yesterdayISO } from '../lib/dates'
+import { todayISO } from '../lib/dates'
 import { todayScripture } from '../lib/mockData' // scripture/theme still placeholder until the AI coaching call is wired up
 
 export default function DailyTaskPage() {
   const [userId, setUserId] = useState(null)
-  const [yesterday, setYesterday] = useState(null)
   const [today, setToday] = useState(null)
   const [tasks, setTasks] = useState([])
   const [stressNote, setStressNote] = useState('')
@@ -28,13 +27,11 @@ export default function DailyTaskPage() {
       if (!uid) return
       setUserId(uid)
 
-      const [{ data: y }, { data: t }, { data: taskRows }] = await Promise.all([
-        supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', yesterdayISO()).maybeSingle(),
+      const [{ data: t }, { data: taskRows }] = await Promise.all([
         supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
         supabase.from('tasks').select('*').eq('user_id', uid).eq('completed', false).order('due_date', { ascending: true }).limit(5),
       ])
 
-      setYesterday(y)
       setToday(t)
       setTasks(taskRows || [])
       setStressNote(t?.stress_note || '')
@@ -75,19 +72,6 @@ export default function DailyTaskPage() {
         </p>
         <p className="mt-1 text-xs text-ink/50">{todayScripture.reference}</p>
         <p className="mt-3 text-sm text-ink/80">{todayScripture.encouragement}</p>
-      </Card>
-
-      <Card className="mt-4">
-        <SectionLabel>How did yesterday go?</SectionLabel>
-        {yesterday ? (
-          <>
-            <RatingScale label="Physical health" value={yesterday.physical_rating} />
-            <RatingScale label="Mental health" value={yesterday.mental_rating} />
-            <RatingScale label="Spiritual health" value={yesterday.spiritual_rating} />
-          </>
-        ) : (
-          <p className="text-sm text-ink/40">No log from yesterday yet.</p>
-        )}
       </Card>
 
       <Card className="mt-4">

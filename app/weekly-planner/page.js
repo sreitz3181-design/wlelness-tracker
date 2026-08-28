@@ -1,21 +1,94 @@
-import { Card, SectionLabel } from '../../components/ui'
-import { recipes, upcomingEvents } from '../../lib/mockData'
+'use client'
 
-const DAYS = ['Meal 1', 'Meal 2', 'Meal 3', 'Meal 4', 'Meal 5', 'Meal 6', 'Meal 7']
+import { useEffect, useState } from 'react'
+import { Card, SectionLabel } from '../../components/ui'
+import { supabase } from '../../lib/supabaseClient'
+import { mondayOfWeekISO } from '../../lib/dates'
+import { getCurrentUserId } from '../../lib/dailyLog'
+import { recipes as mockRecipes } from '../../lib/mockData'
 
 export default function WeeklyPlannerPage() {
+  const [userId, setUserId] = useState(null)
+  const [recipes, setRecipes] = useState([])
+  const [selected, setSelected] = useState(Array(7).fill(''))
+  const [shoppingList, setShoppingList] = useState([])
+  const [sermonNotes, setSermonNotes] = useState('')
+  const [loading, setLoading] = useState(true)
+  const weekStart = mondayOfWeekISO()
+
+  useEffect(() => {
+    async function load() {
+      const uid = await getCurrentUserId()
+      setUserId(uid)
+      if (!uid) return
+
+      const { data: recipeRows } = await supabase.from('recipes').select('*').eq('user_id', uid)
+      // Falls back to the placeholder list until `recipes` has been seeded
+      // in Supabase — see supabase/seed_recipes.sql.
+      setRecipes(recipeRows?.length ? recipeRows : mockRecipes)
+
+      const { data: plan } = await supabase
+        .from('weekly_plans')
+        .select('*')
+        .eq('user_id', uid)
+        .eq('week_start', weekStart)
+        .maybeSingle()
+      if (plan?.meal_slots) setSelected(plan.meal_slots)
+      if (plan?.shopping_list) setShoppingList(plan.shopping_list)
+
+      const { data: sermon } = await supabase
+        .from('sermon_notes')
+        .select('raw_notes')
+        .eq('user_id', uid)
+        .eq('week_start', weekStart)
+        .maybeSingle()
+      setSermonNotes(sermon?.raw_notes || '')
+
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  function updateSlot(i, recipeId) {
+    setSelected((prev) => prev.map((v, idx) => (idx === i ? recipeId : v)))
+  }
+
+  async function generateShoppingList() {
+    const chosen = selected.filter(Boolean).map((id) => recipes.find((r) => r.id === id)).filter(Boolean)
+    const all = chosen.flatMap((r) => r.ingredients || [])
+    const deduped = Array.from(new Set(all))
+    setShoppingList(deduped)
+    await supabase.from('weekly_plans').upsert(
+      { user_id: userId, week_start: weekStart, meal_slots: selected, shopping_list: deduped },
+      { onConflict: 'user_id,week_start' }
+    )
+  }
+
+  async function saveSermonNotes() {
+    await supabase.from('sermon_notes').upsert(
+      { user_id: userId, week_start: weekStart, raw_notes: sermonNotes },
+      { onConflict: 'user_id,week_start' }
+    )
+  }
+
+  if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading planner…</main>
+
   return (
     <main className="px-4 pt-8">
-      <p className="text-xs uppercase tracking-wide text-ink/40">This week</p>
+      <p className="text-xs uppercase tracking-wide text-ink/40">Week of {weekStart}</p>
       <h1 className="font-display text-2xl">Weekly Planner</h1>
 
       <Card className="mt-5">
         <SectionLabel>Pick meals for the coming week</SectionLabel>
         <div className="space-y-2">
-          {DAYS.map((day) => (
-            <div key={day} className="flex items-center justify-between">
-              <span className="text-sm text-ink/70">{day}</span>
-              <select className="w-56 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm">
+          {selected.map((val, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <span className="text-sm text-ink/70">Meal {i + 1}</span>
+              <select
+                value={val}
+                onChange={(e) => updateSlot(i, e.target.value)}
+                className="w-56 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+              >
                 <option value="">Choose a meal…</option>
                 {recipes.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -26,31 +99,41 @@ export default function WeeklyPlannerPage() {
             </div>
           ))}
         </div>
-        <button className="mt-4 w-full rounded-card bg-sage py-2.5 text-sm font-semibold text-paper">
+        <button
+          onClick={generateShoppingList}
+          className="mt-4 w-full rounded-card bg-sage py-2.5 text-sm font-semibold text-paper"
+        >
           Generate shopping list
         </button>
       </Card>
 
-      <Card className="mt-4">
-        <SectionLabel>Calendar — coming week</SectionLabel>
-        <ul className="divide-y divide-sage-light">
-          {upcomingEvents.map((e) => (
-            <li key={e.id} className="flex items-center justify-between py-2 text-sm">
-              <span>{e.title}</span>
-              <span className="text-xs text-ink/40">{e.when}</span>
-            </li>
-          ))}
-        </ul>
-      </Card>
+      {shoppingList.length > 0 && (
+        <Card className="mt-4">
+          <SectionLabel>Shopping list</SectionLabel>
+          <ul className="grid grid-cols-2 gap-x-4 text-sm text-ink/80">
+            {shoppingList.map((item) => (
+              <li key={item} className="py-0.5">
+                • {item}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button className="rounded-card bg-dusk py-3 text-center text-xs font-semibold text-paper">
-          Upload Sermon Notes
-        </button>
-        <button className="rounded-card bg-amber py-3 text-center text-xs font-semibold text-paper">
-          Create New Tasks
-        </button>
-      </div>
+      <Card className="mt-4">
+        <SectionLabel>Sermon notes for this week</SectionLabel>
+        <textarea
+          value={sermonNotes}
+          onChange={(e) => setSermonNotes(e.target.value)}
+          onBlur={saveSermonNotes}
+          rows={4}
+          placeholder="Paste or type this week's sermon notes…"
+          className="w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
+        />
+        <p className="mt-2 text-xs text-ink/40">
+          Theme extraction for daily reflections comes with the AI coaching pass — for now this just saves the raw notes.
+        </p>
+      </Card>
     </main>
   )
 }
