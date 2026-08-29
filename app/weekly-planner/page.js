@@ -15,6 +15,10 @@ export default function WeeklyPlannerPage() {
   const [sermonNotes, setSermonNotes] = useState('')
   const [weight, setWeight] = useState('')
   const [latestWeighIn, setLatestWeighIn] = useState(null)
+  const [suggestions, setSuggestions] = useState([])
+  const [suggestLoading, setSuggestLoading] = useState(false)
+  const [suggestError, setSuggestError] = useState('')
+  const [addedNames, setAddedNames] = useState([])
   const [loading, setLoading] = useState(true)
   const weekStart = mondayOfWeekISO()
 
@@ -93,6 +97,38 @@ export default function WeeklyPlannerPage() {
     )
   }
 
+  async function getSuggestions() {
+    setSuggestLoading(true)
+    setSuggestError('')
+    try {
+      const res = await fetch('/api/suggest-meals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ existingRecipeNames: recipes.map((r) => r.name) }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setSuggestions(data.meals || [])
+      setAddedNames([])
+    } catch (err) {
+      setSuggestError('Could not generate suggestions right now — try again in a moment.')
+    } finally {
+      setSuggestLoading(false)
+    }
+  }
+
+  async function addSuggestionToLibrary(meal) {
+    const { data, error } = await supabase
+      .from('recipes')
+      .insert({ user_id: userId, name: meal.name, ingredients: meal.ingredients })
+      .select()
+      .single()
+    if (!error && data) {
+      setRecipes((prev) => [...prev, data])
+      setAddedNames((prev) => [...prev, meal.name])
+    }
+  }
+
   if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading planner…</main>
 
   return (
@@ -141,6 +177,48 @@ export default function WeeklyPlannerPage() {
           </ul>
         </Card>
       )}
+
+      <Card className="mt-4">
+        <div className="flex items-center justify-between">
+          <SectionLabel>Suggest new meals</SectionLabel>
+          <button
+            onClick={getSuggestions}
+            disabled={suggestLoading}
+            className="rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper disabled:opacity-50"
+          >
+            {suggestLoading ? 'Thinking…' : 'Suggest meals'}
+          </button>
+        </div>
+        {suggestError && <p className="text-xs text-rose">{suggestError}</p>}
+        {suggestions.length === 0 && !suggestLoading && !suggestError && (
+          <p className="text-sm text-ink/40">Get a few new ideas in the same style as your current recipes, sized for your calorie goals.</p>
+        )}
+        <div className="space-y-3">
+          {suggestions.map((meal) => {
+            const added = addedNames.includes(meal.name)
+            return (
+              <div key={meal.name} className="rounded-card border border-sage-light bg-white/70 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-ink">{meal.name}</p>
+                    <p className="text-xs text-ink/50">~{meal.calorieEstimate} cal</p>
+                  </div>
+                  <button
+                    onClick={() => addSuggestionToLibrary(meal)}
+                    disabled={added}
+                    className={`shrink-0 rounded-card px-3 py-1.5 text-xs font-semibold ${
+                      added ? 'bg-sage-light text-sage-dark' : 'bg-sage text-paper'
+                    }`}
+                  >
+                    {added ? 'Added ✓' : 'Add to library'}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-ink/60">{meal.ingredients.join(', ')}</p>
+              </div>
+            )
+          })}
+        </div>
+      </Card>
 
       <Card className="mt-4">
         <SectionLabel>Weekly weigh-in</SectionLabel>
