@@ -20,12 +20,23 @@ const RATINGS = [
   { key: 'just_right', label: 'Just right' },
   { key: 'too_easy', label: 'Too easy' },
 ]
+// Deterministic — no AI call needed for cardio, just a duration/effort
+// recommendation tied to the current level.
+const CARDIO_RECOMMENDATION = {
+  light: { duration: 20, effort: 'Light' },
+  moderate: { duration: 30, effort: 'Moderate' },
+  high: { duration: 40, effort: 'High' },
+}
 
 export default function WorkoutPage() {
   const [userId, setUserId] = useState(null)
   const [log, setLog] = useState(null)
   const [settings, setSettings] = useState(null)
   const [exercises, setExercises] = useState([{ name: '', planned: '', actual: '' }])
+  const [encouragement, setEncouragement] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [genError, setGenError] = useState('')
+  const [cardioActual, setCardioActual] = useState({ duration: '', effort: '' })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -42,7 +53,7 @@ export default function WorkoutPage() {
       const type = data?.workout_type || defaultWorkoutType()
       setLog({ ...(data || {}), workout_type: type })
       setSettings(userSettings)
-      if (data?.workout_planned?.length) {
+      if (type === 'strength' && data?.workout_planned?.length) {
         setExercises(
           data.workout_planned.map((p, i) => ({
             name: p.name,
@@ -50,6 +61,12 @@ export default function WorkoutPage() {
             actual: data.workout_actual?.[i]?.actual || '',
           }))
         )
+      }
+      if (type === 'cardio' && data?.workout_actual && !Array.isArray(data.workout_actual)) {
+        setCardioActual({
+          duration: data.workout_actual.duration ?? '',
+          effort: data.workout_actual.effort ?? '',
+        })
       }
       setLoading(false)
     }
@@ -73,6 +90,43 @@ export default function WorkoutPage() {
     const planned = exercises.map((e) => ({ name: e.name, planned: e.planned }))
     const actual = exercises.map((e) => ({ name: e.name, actual: e.actual }))
     await saveTodayFields(userId, { workout_planned: planned, workout_actual: actual })
+  }
+
+  async function generateWorkout() {
+    setGenerating(true)
+    setGenError('')
+    try {
+      const level = isRestricted(settings) ? 'light' : settings.strength_intensity
+      const res = await fetch('/api/generate-workout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intensityLevel: level }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+
+      const next = data.exercises.map((e) => ({
+        name: e.name,
+        planned: `${e.sets} x ${e.reps} @ ${e.weight}`,
+        actual: '',
+      }))
+      setExercises(next)
+      setEncouragement(data.encouragement || '')
+      await saveTodayFields(userId, {
+        workout_planned: next.map((e) => ({ name: e.name, planned: e.planned })),
+        workout_actual: next.map((e) => ({ name: e.name, actual: '' })),
+      })
+    } catch (err) {
+      setGenError('Could not generate a workout — you can still fill in exercises manually below.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  async function saveCardioActual(field, value) {
+    const next = { ...cardioActual, [field]: value }
+    setCardioActual(next)
+    await saveTodayFields(userId, { workout_actual: next })
   }
 
   async function saveGoalField(field, value) {
@@ -134,9 +188,24 @@ export default function WorkoutPage() {
         </p>
       )}
 
-      {log?.workout_type !== 'rest' && (
+      {log?.workout_type === 'strength' && (
         <Card className="mt-5">
-          <SectionLabel>Exercises (from your own routine)</SectionLabel>
+          <div className="flex items-center justify-between">
+            <SectionLabel>Exercises</SectionLabel>
+            <button
+              onClick={generateWorkout}
+              disabled={generating}
+              className="rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper disabled:opacity-50"
+            >
+              {generating ? 'Generating…' : 'Generate my workout'}
+            </button>
+          </div>
+          {encouragement && (
+            <p className="mb-3 rounded-card bg-sage-light px-3 py-2 text-sm italic text-sage-dark">
+              {encouragement}
+            </p>
+          )}
+          {genError && <p className="mb-2 text-xs text-rose">{genError}</p>}
           {exercises.map((ex, i) => (
             <div key={i} className="mb-2 grid grid-cols-3 gap-2">
               <input
@@ -166,6 +235,40 @@ export default function WorkoutPage() {
             <button onClick={saveExercises} className="rounded-card bg-sage px-3 py-1.5 text-xs font-semibold text-paper">
               Save
             </button>
+          </div>
+        </Card>
+      )}
+
+      {log?.workout_type === 'cardio' && (
+        <Card className="mt-5">
+          <SectionLabel>Today&rsquo;s cardio</SectionLabel>
+          <p className="text-sm text-ink/70">
+            Recommended: <span className="font-semibold text-dusk">{CARDIO_RECOMMENDATION[currentLevel].duration} min</span>{' '}
+            at <span className="font-semibold text-dusk">{CARDIO_RECOMMENDATION[currentLevel].effort}</span> effort
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-ink/50">Actual duration (min)</label>
+              <input
+                type="number"
+                value={cardioActual.duration}
+                onChange={(e) => saveCardioActual('duration', e.target.value)}
+                className="mt-1 w-full rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-ink/50">Actual effort</label>
+              <select
+                value={cardioActual.effort}
+                onChange={(e) => saveCardioActual('effort', e.target.value)}
+                className="mt-1 w-full rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+              >
+                <option value="">Select…</option>
+                <option value="Light">Light</option>
+                <option value="Moderate">Moderate</option>
+                <option value="High">High</option>
+              </select>
+            </div>
           </div>
         </Card>
       )}
