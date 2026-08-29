@@ -1,16 +1,30 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Card, SectionLabel, PlannedActualRow } from '../../components/ui'
+import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
 import { todayISO } from '../../lib/dates'
-import { getCurrentUserId, saveTodayFields, defaultWorkoutType } from '../../lib/dailyLog'
+import {
+  getCurrentUserId,
+  saveTodayFields,
+  defaultWorkoutType,
+  getUserSettings,
+  saveUserSettings,
+  isRestricted,
+  stepLevel,
+} from '../../lib/dailyLog'
 
 const DEFAULT_GOALS = { steps: 11000, activeMinutes: 90, caloriesBurned: 1000 }
+const RATINGS = [
+  { key: 'too_hard', label: 'Too hard' },
+  { key: 'just_right', label: 'Just right' },
+  { key: 'too_easy', label: 'Too easy' },
+]
 
 export default function WorkoutPage() {
   const [userId, setUserId] = useState(null)
   const [log, setLog] = useState(null)
+  const [settings, setSettings] = useState(null)
   const [exercises, setExercises] = useState([{ name: '', planned: '', actual: '' }])
   const [loading, setLoading] = useState(true)
 
@@ -19,15 +33,15 @@ export default function WorkoutPage() {
       const uid = await getCurrentUserId()
       setUserId(uid)
       if (!uid) return
-      const { data } = await supabase
-        .from('daily_logs')
-        .select('*')
-        .eq('user_id', uid)
-        .eq('log_date', todayISO())
-        .maybeSingle()
+
+      const [{ data }, userSettings] = await Promise.all([
+        supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
+        getUserSettings(uid),
+      ])
 
       const type = data?.workout_type || defaultWorkoutType()
       setLog({ ...(data || {}), workout_type: type })
+      setSettings(userSettings)
       if (data?.workout_planned?.length) {
         setExercises(
           data.workout_planned.map((p, i) => ({
@@ -66,7 +80,28 @@ export default function WorkoutPage() {
     await saveTodayFields(userId, { [field]: value === '' ? null : Number(value) })
   }
 
-  if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading today&rsquo;s workout…</main>
+  async function rateDifficulty(rating) {
+    setLog((prev) => ({ ...prev, workout_difficulty: rating }))
+    await saveTodayFields(userId, { workout_difficulty: rating })
+
+    // While restricted, the rating is still recorded for the record, but
+    // it never moves the intensity level — that stays locked to 'light'.
+    if (restricted || log?.workout_type === 'rest') return
+
+    const field = log?.workout_type === 'strength' ? 'strength_intensity' : 'cardio_effort'
+    const nextLevel = stepLevel(settings[field], rating)
+    setSettings((prev) => ({ ...prev, [field]: nextLevel }))
+    await saveUserSettings(userId, { [field]: nextLevel })
+  }
+
+  if (loading || !settings) return <main className="px-4 pt-8 text-sm text-ink/40">Loading today&rsquo;s workout…</main>
+
+  const restricted = isRestricted(settings)
+  const currentLevel = restricted
+    ? 'light'
+    : log?.workout_type === 'strength'
+    ? settings.strength_intensity
+    : settings.cardio_effort
 
   return (
     <main className="px-4 pt-8">
@@ -75,7 +110,7 @@ export default function WorkoutPage() {
         Category:{' '}
         <span className="text-sage-dark capitalize">{log?.workout_type}</span>
       </h1>
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         {['strength', 'cardio', 'rest'].map((t) => (
           <button
             key={t}
@@ -87,7 +122,17 @@ export default function WorkoutPage() {
             {t}
           </button>
         ))}
+        {log?.workout_type !== 'rest' && (
+          <span className="rounded-card bg-amber-light px-3 py-1.5 text-xs font-semibold capitalize text-amber">
+            {currentLevel} intensity
+          </span>
+        )}
       </div>
+      {restricted && (
+        <p className="mt-2 text-xs text-rose">
+          Light intensity through {settings.restricted_until} — intensity won&rsquo;t increase until then, even if you rate a workout too easy.
+        </p>
+      )}
 
       {log?.workout_type !== 'rest' && (
         <Card className="mt-5">
@@ -122,6 +167,30 @@ export default function WorkoutPage() {
               Save
             </button>
           </div>
+        </Card>
+      )}
+
+      {log?.workout_type !== 'rest' && (
+        <Card className="mt-4">
+          <SectionLabel>How was this workout?</SectionLabel>
+          <div className="flex gap-2">
+            {RATINGS.map((r) => (
+              <button
+                key={r.key}
+                onClick={() => rateDifficulty(r.key)}
+                className={`flex-1 rounded-card px-3 py-2 text-xs font-semibold ${
+                  log?.workout_difficulty === r.key ? 'bg-dusk text-paper' : 'bg-sage-light text-ink/60'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink/40">
+            {restricted
+              ? 'Recorded — intensity stays light while restricted.'
+              : 'Feeds directly into your next scheduled workout of this type.'}
+          </p>
         </Card>
       )}
 

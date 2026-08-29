@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
 import { todayISO } from '../../lib/dates'
-import { getCurrentUserId, saveTodayFields } from '../../lib/dailyLog'
+import { getCurrentUserId, saveTodayFields, getLatestWeight } from '../../lib/dailyLog'
 
 const MEALS = [
   { key: 'breakfast', label: 'Breakfast', goal: 500 },
@@ -12,12 +12,12 @@ const MEALS = [
   { key: 'dinner', label: 'Dinner', goal: 800 },
   { key: 'snacks', label: 'Snacks', goal: 300 },
 ]
-const WATER_GOAL_OZ = 100
 
 export default function NutritionPage() {
   const [userId, setUserId] = useState(null)
   const [actual, setActual] = useState({})
   const [water, setWater] = useState('')
+  const [weight, setWeight] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -25,14 +25,13 @@ export default function NutritionPage() {
       const uid = await getCurrentUserId()
       setUserId(uid)
       if (!uid) return
-      const { data } = await supabase
-        .from('daily_logs')
-        .select('nutrition_actual')
-        .eq('user_id', uid)
-        .eq('log_date', todayISO())
-        .maybeSingle()
+      const [{ data }, latestWeight] = await Promise.all([
+        supabase.from('daily_logs').select('nutrition_actual').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
+        getLatestWeight(uid),
+      ])
       setActual(data?.nutrition_actual || {})
       setWater(data?.nutrition_actual?.water_oz ?? '')
+      setWeight(latestWeight)
       setLoading(false)
     }
     load()
@@ -52,6 +51,11 @@ export default function NutritionPage() {
   }
 
   if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading nutrition…</main>
+
+  // Standard general-wellness guideline: roughly half your body weight in
+  // fluid ounces per day. Falls back to a placeholder note until a weigh-in
+  // has been logged on the Weekly Planner.
+  const waterGoal = weight ? Math.round(weight * 0.5) : null
 
   return (
     <main className="px-4 pt-8">
@@ -92,7 +96,9 @@ export default function NutritionPage() {
         <div className="flex items-center justify-between">
           <span className="text-sm">Water</span>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-ink/60">Goal: {WATER_GOAL_OZ} oz</span>
+            <span className="font-mono text-sm text-ink/60">
+              Goal: {waterGoal ? `${waterGoal} oz` : 'log a weigh-in'}
+            </span>
             <input
               type="number"
               value={water}
@@ -101,6 +107,11 @@ export default function NutritionPage() {
             />
           </div>
         </div>
+        {!weight && (
+          <p className="mt-2 text-xs text-ink/40">
+            Water goal needs a weigh-in first — log one on the Weekly Planner.
+          </p>
+        )}
       </Card>
 
       <p className="mt-4 text-xs text-ink/40">

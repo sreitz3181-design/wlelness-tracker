@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
-import { mondayOfWeekISO } from '../../lib/dates'
+import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
 
@@ -13,6 +13,8 @@ export default function WeeklyPlannerPage() {
   const [selected, setSelected] = useState(Array(7).fill(''))
   const [shoppingList, setShoppingList] = useState([])
   const [sermonNotes, setSermonNotes] = useState('')
+  const [weight, setWeight] = useState('')
+  const [latestWeighIn, setLatestWeighIn] = useState(null)
   const [loading, setLoading] = useState(true)
   const weekStart = mondayOfWeekISO()
 
@@ -44,10 +46,30 @@ export default function WeeklyPlannerPage() {
         .maybeSingle()
       setSermonNotes(sermon?.raw_notes || '')
 
+      const { data: lastWeighIn } = await supabase
+        .from('weigh_ins')
+        .select('weight_lbs, weigh_date')
+        .eq('user_id', uid)
+        .order('weigh_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      setLatestWeighIn(lastWeighIn || null)
+
       setLoading(false)
     }
     load()
   }, [])
+
+  async function saveWeighIn() {
+    if (!weight) return
+    const numeric = Number(weight)
+    await supabase.from('weigh_ins').upsert(
+      { user_id: userId, weigh_date: todayISO(), weight_lbs: numeric },
+      { onConflict: 'user_id,weigh_date' }
+    )
+    setLatestWeighIn({ weight_lbs: numeric, weigh_date: todayISO() })
+    setWeight('')
+  }
 
   function updateSlot(i, recipeId) {
     setSelected((prev) => prev.map((v, idx) => (idx === i ? recipeId : v)))
@@ -119,6 +141,30 @@ export default function WeeklyPlannerPage() {
           </ul>
         </Card>
       )}
+
+      <Card className="mt-4">
+        <SectionLabel>Weekly weigh-in</SectionLabel>
+        {latestWeighIn && (
+          <p className="mb-2 text-xs text-ink/50">
+            Last logged: {latestWeighIn.weight_lbs} lbs on {latestWeighIn.weigh_date}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <input
+            type="number"
+            value={weight}
+            onChange={(e) => setWeight(e.target.value)}
+            placeholder="Weight (lbs)"
+            className="flex-1 rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
+          />
+          <button onClick={saveWeighIn} className="rounded-card bg-sage px-4 py-1.5 text-sm font-semibold text-paper">
+            Log
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-ink/40">
+          Your first entry becomes your starting weight — water and calorie targets use whichever entry is most recent.
+        </p>
+      </Card>
 
       <Card className="mt-4">
         <SectionLabel>Sermon notes for this week</SectionLabel>
