@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
-import { todayISO } from '../../lib/dates'
+import { todayISO, mondayOfWeekISO, mondayBasedDayIndex } from '../../lib/dates'
 import { getCurrentUserId, saveTodayFields, getLatestWeight } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
 
@@ -20,6 +20,7 @@ export default function NutritionPage() {
   const [recipes, setRecipes] = useState([])
   const [selections, setSelections] = useState({})
   const [nutritionActual, setNutritionActual] = useState({})
+  const [defaultedFrom, setDefaultedFrom] = useState({})
   const [water, setWater] = useState('')
   const [weight, setWeight] = useState(null)
   const [medications, setMedications] = useState([])
@@ -32,18 +33,58 @@ export default function NutritionPage() {
       const uid = await getCurrentUserId()
       setUserId(uid)
       if (!uid) return
-      const [{ data }, latestWeight, { data: recipeRows }, { data: meds }, { data: logs }] = await Promise.all([
+      const [{ data }, latestWeight, { data: recipeRows }, { data: meds }, { data: logs }, { data: plan }] = await Promise.all([
         supabase.from('daily_logs').select('nutrition_actual, nutrition_selections').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
         getLatestWeight(uid),
         supabase.from('recipes').select('*').eq('user_id', uid),
         supabase.from('medications').select('*').eq('user_id', uid).eq('active', true).order('created_at', { ascending: true }),
         supabase.from('medication_logs').select('medication_id, taken').eq('user_id', uid).eq('log_date', todayISO()),
+        supabase.from('weekly_plans').select('*').eq('user_id', uid).eq('week_start', mondayOfWeekISO()).maybeSingle(),
       ])
-      setWater(data?.nutrition_actual?.water_oz ?? '')
-      setNutritionActual(data?.nutrition_actual || {})
-      setSelections(data?.nutrition_selections || {})
+      const existingSelections = data?.nutrition_selections || {}
+      const existingActual = data?.nutrition_actual || {}
+      const allRecipes = recipeRows || []
+
+      // Default any not-yet-chosen meal to whatever the Weekly Planner has
+      // slotted for today's day of the week — never overrides a selection
+      // already made today.
+      const todayIdx = mondayBasedDayIndex()
+      const slotsByKey = {
+        breakfast: plan?.breakfast_slots || [],
+        lunch: plan?.lunch_slots || [],
+        dinner: plan?.dinner_slots || [],
+        snacks: plan?.snack_slots || [],
+      }
+      const nextSelections = { ...existingSelections }
+      const nextActual = { ...existingActual }
+      const defaulted = {}
+      let appliedDefault = false
+
+      MEALS.forEach((m) => {
+        if (nextSelections[m.key]) return // already chosen today, leave it alone
+        const todaysSlot = slotsByKey[m.key].find((s) => s.day === todayIdx)
+        if (!todaysSlot) return
+        const recipeId =
+          m.key === 'lunch' && todaysSlot.type === 'leftover'
+            ? slotsByKey.dinner[todaysSlot.dinnerIndex]?.recipeId
+            : todaysSlot.recipeId
+        if (!recipeId) return
+        nextSelections[m.key] = recipeId
+        const recipe = allRecipes.find((r) => r.id === recipeId)
+        nextActual[m.key] = recipe?.calories ?? null
+        defaulted[m.key] = true
+        appliedDefault = true
+      })
+
+      setWater(nextActual.water_oz ?? '')
+      setNutritionActual(nextActual)
+      setSelections(nextSelections)
+      setDefaultedFrom(defaulted)
       setWeight(latestWeight)
-      setRecipes(recipeRows || [])
+      setRecipes(allRecipes)
+      if (appliedDefault) {
+        await saveTodayFields(uid, { nutrition_selections: nextSelections, nutrition_actual: nextActual })
+      }
       setMedications(meds || [])
       const takenMap = {}
       ;(logs || []).forEach((l) => {
@@ -58,6 +99,7 @@ export default function NutritionPage() {
   async function selectMeal(key, recipeId) {
     const nextSelections = { ...selections, [key]: recipeId }
     setSelections(nextSelections)
+    setDefaultedFrom((prev) => ({ ...prev, [key]: false }))
     const recipe = recipes.find((r) => r.id === recipeId)
     const nextActual = { ...nutritionActual, [key]: recipe?.calories ?? null }
     setNutritionActual(nextActual)
@@ -108,62 +150,68 @@ export default function NutritionPage() {
       <p className="text-xs uppercase tracking-wide text-ink/40">Today</p>
       <h1 className="font-display text-2xl">Daily Nutrition</h1>
 
-      {!calorieTargets && (
-        <p className="mt-3 text-sm text-ink/40">Calorie targets need a weigh-in first — log one on the Weekly Planner.</p>
-      )}
-
-      {calorieTargets && (
-        <Card className="mt-5">
-          <SectionLabel>Meals today</SectionLabel>
-          <div className="space-y-4">
-            {MEALS.map((m) => {
-              const categoryRecipes = recipes.filter((r) => (r.category || 'Dinner') === m.category)
-              const selected = recipes.find((r) => r.id === selections[m.key])
-              const target = calorieTargets.meals[m.key]
-              const diff = selected?.calories != null ? selected.calories - target : null
-              return (
-                <div key={m.key}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-ink/70">{m.label}</span>
-                    <select
-                      value={selections[m.key] || ''}
-                      onChange={(e) => selectMeal(m.key, e.target.value)}
-                      className="w-52 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
-                    >
-                      <option value="">Choose a meal…</option>
-                      {categoryRecipes.map((r) => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {categoryRecipes.length === 0 && (
-                    <p className="mt-1 text-right text-xs text-ink/40">
-                      No {m.category.toLowerCase()} meals in your library yet —{' '}
-                      <Link href="/library" className="font-semibold text-dusk">add some</Link>
-                    </p>
-                  )}
-                  {selected && (
-                    <p className="mt-1 text-right text-xs text-ink/50">
-                      {selected.calories != null ? (
-                        <>
-                          {selected.calories} cal vs {target} target ({diff > 0 ? '+' : ''}{diff} {diff > 0 ? 'over' : diff < 0 ? 'under' : 'on target'})
-                        </>
-                      ) : (
-                        <>No calorie estimate yet — <Link href="/library" className="font-semibold text-dusk">estimate it in the Library</Link></>
-                      )}
-                    </p>
-                  )}
+      <Card className="mt-5">
+        <SectionLabel>Meals today</SectionLabel>
+        {!calorieTargets && (
+          <p className="mb-3 text-xs text-ink/40">
+            No calorie targets yet — log a weigh-in on the Weekly Planner to see meals compared against a target. You can still pick your meals below.
+          </p>
+        )}
+        <div className="space-y-4">
+          {MEALS.map((m) => {
+            const categoryRecipes = recipes.filter((r) => (r.category || 'Dinner') === m.category)
+            const selected = recipes.find((r) => r.id === selections[m.key])
+            const target = calorieTargets?.meals[m.key]
+            const diff = selected?.calories != null && target != null ? selected.calories - target : null
+            return (
+              <div key={m.key}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-ink/70">
+                    {m.label}
+                    {defaultedFrom[m.key] && <span className="ml-1.5 text-[10px] font-semibold text-sage-dark">from plan</span>}
+                  </span>
+                  <select
+                    value={selections[m.key] || ''}
+                    onChange={(e) => selectMeal(m.key, e.target.value)}
+                    className="w-52 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+                  >
+                    <option value="">Choose a meal…</option>
+                    {categoryRecipes.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
                 </div>
-              )
-            })}
-          </div>
+                {categoryRecipes.length === 0 && (
+                  <p className="mt-1 text-right text-xs text-ink/40">
+                    No {m.category.toLowerCase()} meals in your library yet —{' '}
+                    <Link href="/library" className="font-semibold text-dusk">add some</Link>
+                  </p>
+                )}
+                {selected && (
+                  <p className="mt-1 text-right text-xs text-ink/50">
+                    {selected.calories == null ? (
+                      <>No calorie estimate yet — <Link href="/library" className="font-semibold text-dusk">estimate it in the Library</Link></>
+                    ) : target != null ? (
+                      <>
+                        {selected.calories} cal vs {target} target ({diff > 0 ? '+' : ''}{diff} {diff > 0 ? 'over' : diff < 0 ? 'under' : 'on target'})
+                      </>
+                    ) : (
+                      <>{selected.calories} cal (no target yet)</>
+                    )}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        {calorieTargets && (
           <p className="mt-3 text-xs text-ink/40">
             Daily target: {calorieTargets.dailyTarget} cal (~{calorieTargets.maintenance} cal estimated
             maintenance, {calorieTargets.deficit} cal/day deficit — capped at a safer pace than your stated
             10 lb/month goal implies; recalculates from your latest weigh-in).
           </p>
-        </Card>
-      )}
+        )}
+      </Card>
 
       <Card className="mt-4">
         <SectionLabel>Water intake</SectionLabel>

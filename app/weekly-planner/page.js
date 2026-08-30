@@ -7,7 +7,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
-import { CATEGORY_SLOT_LIMITS, emptySlot } from '../../lib/mealLibrary'
+import { CATEGORY_SLOT_LIMITS, DAY_NAMES, emptySlot } from '../../lib/mealLibrary'
 
 function recipeIngredients(recipe, slot) {
   if (!recipe) return []
@@ -17,7 +17,7 @@ function recipeIngredients(recipe, slot) {
 export default function WeeklyPlannerPage() {
   const [userId, setUserId] = useState(null)
   const [recipes, setRecipes] = useState([])
-  const [dinnerSlots, setDinnerSlots] = useState(Array.from({ length: 7 }, emptySlot))
+  const [dinnerSlots, setDinnerSlots] = useState(Array.from({ length: 7 }, (_, i) => emptySlot(i)))
   const [breakfastSlots, setBreakfastSlots] = useState([])
   const [lunchSlots, setLunchSlots] = useState([])
   const [snackSlots, setSnackSlots] = useState([])
@@ -46,7 +46,9 @@ export default function WeeklyPlannerPage() {
         .eq('user_id', uid)
         .eq('week_start', weekStart)
         .maybeSingle()
-      if (plan?.dinner_slots?.length) setDinnerSlots(plan.dinner_slots)
+      if (plan?.dinner_slots?.length) {
+        setDinnerSlots(plan.dinner_slots.map((s, i) => ({ ...s, day: s.day ?? i })))
+      }
       if (plan?.breakfast_slots) setBreakfastSlots(plan.breakfast_slots)
       if (plan?.lunch_slots) setLunchSlots(plan.lunch_slots)
       if (plan?.snack_slots) setSnackSlots(plan.snack_slots)
@@ -105,11 +107,15 @@ export default function WeeklyPlannerPage() {
   }
 
   function selectRecipe(category, index, recipeId) {
-    settersByCategory[category]((prev) => prev.map((s, i) => (i === index ? { recipeId, ingredients: null } : s)))
+    settersByCategory[category]((prev) => prev.map((s, i) => (i === index ? { recipeId, ingredients: null, day: s.day } : s)))
   }
 
   function selectLeftover(index, dinnerIndex) {
-    setLunchSlots((prev) => prev.map((s, i) => (i === index ? { type: 'leftover', dinnerIndex } : s)))
+    setLunchSlots((prev) => prev.map((s, i) => (i === index ? { type: 'leftover', dinnerIndex, day: s.day } : s)))
+  }
+
+  function setSlotDay(category, index, day) {
+    settersByCategory[category]((prev) => prev.map((s, i) => (i === index ? { ...s, day } : s)))
   }
 
   function updateSubstitution(category, index, ingredientIndex, value) {
@@ -176,6 +182,22 @@ export default function WeeklyPlannerPage() {
 
     return (
       <div key={index} className="rounded-card border border-sage-light bg-white/70 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          {category === 'Dinner' ? (
+            <span className="text-xs font-semibold text-ink/60">{DAY_NAMES[slot.day]}</span>
+          ) : (
+            <select
+              value={slot.day ?? ''}
+              onChange={(e) => setSlotDay(category, index, e.target.value === '' ? null : Number(e.target.value))}
+              className="rounded-card border border-sage-light bg-white/70 px-2 py-1 text-xs"
+            >
+              <option value="">Any day</option>
+              {DAY_NAMES.map((name, i) => (
+                <option key={name} value={i}>{name}</option>
+              ))}
+            </select>
+          )}
+        </div>
         <div className="flex items-center justify-between gap-2">
           <select
             value={
@@ -205,16 +227,18 @@ export default function WeeklyPlannerPage() {
                   if (!dRecipe) return null
                   return (
                     <option key={di} value={`leftover:${di}`}>
-                      Leftover: {dRecipe.name}
+                      Leftover: {dRecipe.name} ({DAY_NAMES[d.day]})
                     </option>
                   )
                 })}
               </optgroup>
             )}
           </select>
-          <button onClick={() => removeSlot(category, index)} className="shrink-0 text-xs text-ink/30">
-            ×
-          </button>
+          {category !== 'Dinner' && (
+            <button onClick={() => removeSlot(category, index)} className="shrink-0 text-xs text-ink/30">
+              ×
+            </button>
+          )}
         </div>
 
         {category === 'Lunch' && slot.type === 'leftover' && (
