@@ -19,6 +19,7 @@ export default function WeeklyPlannerPage() {
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [suggestError, setSuggestError] = useState('')
   const [addedNames, setAddedNames] = useState([])
+  const [estimatingId, setEstimatingId] = useState(null)
   const [loading, setLoading] = useState(true)
   const weekStart = mondayOfWeekISO()
 
@@ -120,12 +121,38 @@ export default function WeeklyPlannerPage() {
   async function addSuggestionToLibrary(meal) {
     const { data, error } = await supabase
       .from('recipes')
-      .insert({ user_id: userId, name: meal.name, ingredients: meal.ingredients })
+      .insert({
+        user_id: userId,
+        name: meal.name,
+        ingredients: meal.ingredients,
+        calories: meal.calorieEstimate ?? null,
+        fat_g: meal.fatEstimate ?? null,
+        sodium_mg: meal.sodiumEstimate ?? null,
+      })
       .select()
       .single()
     if (!error && data) {
       setRecipes((prev) => [...prev, data])
       setAddedNames((prev) => [...prev, meal.name])
+    }
+  }
+
+  async function estimateNutrition(recipe) {
+    setEstimatingId(recipe.id)
+    try {
+      const res = await fetch('/api/estimate-nutrition', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: recipe.name, ingredients: recipe.ingredients }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      await supabase.from('recipes').update({ calories: data.calories, fat_g: data.fat_g, sodium_mg: data.sodium_mg }).eq('id', recipe.id)
+      setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? { ...r, calories: data.calories, fat_g: data.fat_g, sodium_mg: data.sodium_mg } : r)))
+    } catch (err) {
+      // Silent — the "Estimate nutrition" button just stays available to retry.
+    } finally {
+      setEstimatingId(null)
     }
   }
 
@@ -138,24 +165,46 @@ export default function WeeklyPlannerPage() {
 
       <Card className="mt-5">
         <SectionLabel>Pick meals for the coming week</SectionLabel>
-        <div className="space-y-2">
-          {selected.map((val, i) => (
-            <div key={i} className="flex items-center justify-between">
-              <span className="text-sm text-ink/70">Meal {i + 1}</span>
-              <select
-                value={val}
-                onChange={(e) => updateSlot(i, e.target.value)}
-                className="w-56 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
-              >
-                <option value="">Choose a meal…</option>
-                {recipes.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+        <div className="space-y-3">
+          {selected.map((val, i) => {
+            const recipe = recipes.find((r) => r.id === val)
+            return (
+              <div key={i}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-ink/70">Meal {i + 1}</span>
+                  <select
+                    value={val}
+                    onChange={(e) => updateSlot(i, e.target.value)}
+                    className="w-56 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+                  >
+                    <option value="">Choose a meal…</option>
+                    {recipes.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {recipe && (
+                  <div className="mt-1 flex items-center justify-end gap-2 text-right">
+                    {recipe.calories ? (
+                      <p className="text-xs text-ink/40">
+                        {recipe.calories} cal · {recipe.fat_g}g fat · {recipe.sodium_mg}mg sodium (rough est.)
+                      </p>
+                    ) : (
+                      <button
+                        onClick={() => estimateNutrition(recipe)}
+                        disabled={estimatingId === recipe.id}
+                        className="text-xs font-semibold text-dusk disabled:opacity-50"
+                      >
+                        {estimatingId === recipe.id ? 'Estimating…' : 'Estimate nutrition'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
         <button
           onClick={generateShoppingList}
@@ -201,7 +250,9 @@ export default function WeeklyPlannerPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-ink">{meal.name}</p>
-                    <p className="text-xs text-ink/50">~{meal.calorieEstimate} cal</p>
+                    <p className="text-xs text-ink/50">
+                      ~{meal.calorieEstimate} cal · {meal.fatEstimate}g fat · {meal.sodiumEstimate}mg sodium (rough est.)
+                    </p>
                   </div>
                   <button
                     onClick={() => addSuggestionToLibrary(meal)}
@@ -245,17 +296,17 @@ export default function WeeklyPlannerPage() {
       </Card>
 
       <Card className="mt-4">
-        <SectionLabel>Sermon notes for this week</SectionLabel>
+        <SectionLabel>Sermon Notes or Scripture for this week</SectionLabel>
         <textarea
           value={sermonNotes}
           onChange={(e) => setSermonNotes(e.target.value)}
           onBlur={saveSermonNotes}
           rows={4}
-          placeholder="Paste or type this week's sermon notes…"
+          placeholder="Paste or type this week's sermon notes, or a passage of scripture you want to reflect on…"
           className="w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
         />
         <p className="mt-2 text-xs text-ink/40">
-          Theme extraction for daily reflections comes with the AI coaching pass — for now this just saves the raw notes.
+          Feeds your daily reflection question and love reminder on the Today screen.
         </p>
       </Card>
     </main>

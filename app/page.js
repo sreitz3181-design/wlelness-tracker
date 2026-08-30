@@ -39,6 +39,8 @@ export default function DailyTaskPage() {
   const [reflectionResponse, setReflectionResponse] = useState('')
   const [reflectionSaved, setReflectionSaved] = useState(false)
   const [reflectionLoading, setReflectionLoading] = useState(false)
+  const [stressReflection, setStressReflection] = useState(null)
+  const [stressReflectionLoading, setStressReflectionLoading] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const dateLabel = new Date().toLocaleDateString('en-US', {
@@ -70,6 +72,9 @@ export default function DailyTaskPage() {
       })
       setJournalFeedback(t?.mental_health_feedback || '')
       setReflectionResponse(t?.spiritual_reflection_response || '')
+      if (t?.stress_based_reflection) {
+        setStressReflection({ encouragement: t.stress_based_reflection, reference: t.stress_based_reference })
+      }
 
       if (t?.spiritual_reflection_question) {
         setReflection({ reflectionQuestion: t.spiritual_reflection_question, loveReminder: t.daily_love_reminder, reference: t.daily_love_reference })
@@ -114,6 +119,34 @@ export default function DailyTaskPage() {
     await saveField('spiritual_reflection_response', reflectionResponse)
     setReflectionSaved(true)
     setTimeout(() => setReflectionSaved(false), 2500)
+  }
+
+  async function getStressReflection() {
+    setStressReflectionLoading(true)
+    try {
+      const res = await fetch('/api/stress-reflection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stressCause: journal.stress_cause,
+          stressHelped: journal.stress_helped,
+          mentalHealthHelpers: journal.mental_health_helpers,
+          additionalShare: journal.additional_share,
+          stressRating: today?.stress_rating,
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setStressReflection({ encouragement: data.encouragement, reference: data.reference })
+      await Promise.all([
+        saveField('stress_based_reflection', data.encouragement),
+        saveField('stress_based_reference', data.reference),
+      ])
+    } catch (err) {
+      setStressReflection({ encouragement: 'Could not generate this right now — try again in a moment.', reference: '' })
+    } finally {
+      setStressReflectionLoading(false)
+    }
   }
 
   async function addTask() {
@@ -261,6 +294,26 @@ export default function DailyTaskPage() {
         {!reflection && !reflectionLoading && (
           <p className="text-sm text-ink/40">Couldn&rsquo;t load today&rsquo;s reflection — try refreshing.</p>
         )}
+
+        <div className="mt-4 border-t border-sage-light pt-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/40">Based on today&rsquo;s journal</p>
+          <p className="mt-1 text-xs text-ink/40">
+            Optional — a biblical encouragement responding to what you write below in the mental health journal.
+          </p>
+          <button
+            onClick={getStressReflection}
+            disabled={stressReflectionLoading}
+            className="mt-2 rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper disabled:opacity-50"
+          >
+            {stressReflectionLoading ? 'Thinking…' : stressReflection ? 'Regenerate' : 'Get biblical encouragement'}
+          </button>
+          {stressReflection && (
+            <div className="mt-2">
+              <p className="text-sm text-ink/80">{stressReflection.encouragement}</p>
+              {stressReflection.reference && <p className="mt-1 text-xs text-ink/50">{stressReflection.reference}</p>}
+            </div>
+          )}
+        </div>
       </Card>
 
       <Card className="mt-4">

@@ -21,10 +21,10 @@ Their style, based on what's already in the library: protein-forward (mostly chi
 
 Suggest 6 NEW meals that are NOT already in their list and don't just rename an existing one with one ingredient swapped — genuinely different enough to add variety (different proteins, cuisines, or cooking styles than what's already there).
 
-For each: a short meal name, a simple ingredient list (matching the style of the examples — plain ingredient names, quantities only where it matters like "2 Chicken Breast"), and a rough calorie estimate per serving.
+For each: a short meal name, a simple ingredient list (matching the style of the examples — plain ingredient names, quantities only where it matters like "2 Chicken Breast"), and per-serving estimates for calories, fat (grams), and sodium (milligrams). These are estimates from an ingredient list with no brand or exact-quantity data — reasonable, not falsely precise.
 
 Respond with ONLY valid JSON, no other text, in exactly this shape:
-{"meals": [{"name": "string", "ingredients": ["string"], "calorieEstimate": number}]}`
+{"meals": [{"name": "string", "ingredients": ["string"], "calorieEstimate": number, "fatEstimate": number, "sodiumEstimate": number}]}`
 
   try {
     const response = await anthropic.messages.create({
