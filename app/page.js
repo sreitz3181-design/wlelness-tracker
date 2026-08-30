@@ -4,21 +4,40 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, SectionLabel, RatingScale } from '../components/ui'
 import { supabase } from '../lib/supabaseClient'
-import { todayISO } from '../lib/dates'
-import { mondayOfWeekISO } from '../lib/dates'
+import { todayISO, mondayOfWeekISO } from '../lib/dates'
 import { referenceForDate } from '../lib/scriptureReferences'
+
+const PRIORITIES = ['Critical', 'Moderate', 'Low']
+const PRIORITY_ORDER = { Critical: 0, Moderate: 1, Low: 2 }
+const PRIORITY_TONE = { Critical: 'bg-rose-light text-rose', Moderate: 'bg-amber-light text-amber', Low: 'bg-sage-light text-sage-dark' }
+
+function sortTasks(list) {
+  return [...list].sort((a, b) => {
+    const p = (PRIORITY_ORDER[a.priority] ?? 1) - (PRIORITY_ORDER[b.priority] ?? 1)
+    if (p !== 0) return p
+    if (!a.due_date) return 1
+    if (!b.due_date) return -1
+    return a.due_date.localeCompare(b.due_date)
+  })
+}
 
 export default function DailyTaskPage() {
   const [userId, setUserId] = useState(null)
   const [today, setToday] = useState(null)
   const [tasks, setTasks] = useState([])
   const [newTask, setNewTask] = useState('')
+  const [newTaskDue, setNewTaskDue] = useState('')
+  const [newTaskPriority, setNewTaskPriority] = useState('Moderate')
+  const [editingId, setEditingId] = useState(null)
+  const [editDraft, setEditDraft] = useState({ title: '', due_date: '', priority: 'Moderate' })
   const [stressNote, setStressNote] = useState('')
   const [journal, setJournal] = useState({ stress_cause: '', stress_helped: '', mental_health_helpers: '', additional_share: '' })
+  const [journalSaved, setJournalSaved] = useState(false)
   const [journalFeedback, setJournalFeedback] = useState('')
   const [journalLoading, setJournalLoading] = useState(false)
   const [reflection, setReflection] = useState(null)
   const [reflectionResponse, setReflectionResponse] = useState('')
+  const [reflectionSaved, setReflectionSaved] = useState(false)
   const [reflectionLoading, setReflectionLoading] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -37,11 +56,11 @@ export default function DailyTaskPage() {
 
       const [{ data: t }, { data: taskRows }] = await Promise.all([
         supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
-        supabase.from('tasks').select('*').eq('user_id', uid).eq('completed', false).order('due_date', { ascending: true }).limit(8),
+        supabase.from('tasks').select('*').eq('user_id', uid).eq('completed', false).limit(20),
       ])
 
       setToday(t)
-      setTasks(taskRows || [])
+      setTasks(sortTasks(taskRows || []))
       setStressNote(t?.stress_note || '')
       setJournal({
         stress_cause: t?.stress_cause || '',
@@ -78,21 +97,57 @@ export default function DailyTaskPage() {
 
   function updateJournal(key, value) {
     setJournal((prev) => ({ ...prev, [key]: value }))
+    setJournalSaved(false)
   }
 
-  async function saveJournalField(key) {
-    await saveField(key, journal[key])
+  async function saveJournalEntry() {
+    if (!userId) return
+    setToday((prev) => ({ ...(prev || {}), ...journal }))
+    await supabase
+      .from('daily_logs')
+      .upsert({ user_id: userId, log_date: todayISO(), ...journal }, { onConflict: 'user_id,log_date' })
+    setJournalSaved(true)
+    setTimeout(() => setJournalSaved(false), 2500)
+  }
+
+  async function saveReflectionResponse() {
+    await saveField('spiritual_reflection_response', reflectionResponse)
+    setReflectionSaved(true)
+    setTimeout(() => setReflectionSaved(false), 2500)
   }
 
   async function addTask() {
     if (!newTask.trim() || !userId) return
     const { data } = await supabase
       .from('tasks')
-      .insert({ user_id: userId, title: newTask.trim() })
+      .insert({ user_id: userId, title: newTask.trim(), due_date: newTaskDue || null, priority: newTaskPriority })
       .select()
       .single()
-    if (data) setTasks((prev) => [...prev, data])
+    if (data) setTasks((prev) => sortTasks([...prev, data]))
     setNewTask('')
+    setNewTaskDue('')
+    setNewTaskPriority('Moderate')
+  }
+
+  async function completeTask(id) {
+    setTasks((prev) => prev.filter((t) => t.id !== id))
+    await supabase.from('tasks').update({ completed: true }).eq('id', id)
+  }
+
+  function startEdit(task) {
+    setEditingId(task.id)
+    setEditDraft({ title: task.title, due_date: task.due_date || '', priority: task.priority || 'Moderate' })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function saveEdit(id) {
+    const updates = { title: editDraft.title, due_date: editDraft.due_date || null, priority: editDraft.priority }
+    setTasks((prev) => sortTasks(prev.map((t) => (t.id === id ? { ...t, ...updates } : t))))
+    setEditingId(null)
+    await supabase.from('tasks').update(updates).eq('id', id)
   }
 
   async function getJournalFeedback() {
@@ -163,10 +218,6 @@ export default function DailyTaskPage() {
     }
   }
 
-  async function saveReflectionResponse() {
-    await saveField('spiritual_reflection_response', reflectionResponse)
-  }
-
   if (loading) {
     return <main className="px-4 pt-8 text-sm text-ink/40">Loading today…</main>
   }
@@ -191,12 +242,20 @@ export default function DailyTaskPage() {
             </p>
             <textarea
               value={reflectionResponse}
-              onChange={(e) => setReflectionResponse(e.target.value)}
-              onBlur={saveReflectionResponse}
+              onChange={(e) => {
+                setReflectionResponse(e.target.value)
+                setReflectionSaved(false)
+              }}
               rows={3}
               placeholder="Your thoughts…"
               className="mt-2 w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
             />
+            <div className="mt-2 flex items-center gap-2">
+              <button onClick={saveReflectionResponse} className="rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper">
+                Save reflection
+              </button>
+              {reflectionSaved && <span className="text-xs text-sage-dark">Saved ✓</span>}
+            </div>
           </>
         )}
         {!reflection && !reflectionLoading && (
@@ -250,7 +309,6 @@ export default function DailyTaskPage() {
             <textarea
               value={journal.stress_cause}
               onChange={(e) => updateJournal('stress_cause', e.target.value)}
-              onBlur={() => saveJournalField('stress_cause')}
               rows={2}
               className="mt-1 w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
             />
@@ -260,7 +318,6 @@ export default function DailyTaskPage() {
             <textarea
               value={journal.stress_helped}
               onChange={(e) => updateJournal('stress_helped', e.target.value)}
-              onBlur={() => saveJournalField('stress_helped')}
               rows={2}
               className="mt-1 w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
             />
@@ -270,7 +327,6 @@ export default function DailyTaskPage() {
             <textarea
               value={journal.mental_health_helpers}
               onChange={(e) => updateJournal('mental_health_helpers', e.target.value)}
-              onBlur={() => saveJournalField('mental_health_helpers')}
               rows={2}
               className="mt-1 w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
             />
@@ -280,16 +336,21 @@ export default function DailyTaskPage() {
             <textarea
               value={journal.additional_share}
               onChange={(e) => updateJournal('additional_share', e.target.value)}
-              onBlur={() => saveJournalField('additional_share')}
               rows={2}
               className="mt-1 w-full rounded-card border border-sage-light bg-white/70 p-2 text-sm"
             />
           </div>
         </div>
+        <div className="mt-3 flex items-center gap-2">
+          <button onClick={saveJournalEntry} className="rounded-card bg-sage px-4 py-2 text-sm font-semibold text-paper">
+            Save journal entry
+          </button>
+          {journalSaved && <span className="text-xs text-sage-dark">Saved ✓</span>}
+        </div>
         <button
           onClick={getJournalFeedback}
           disabled={journalLoading}
-          className="mt-3 w-full rounded-card bg-dusk py-2 text-sm font-semibold text-paper disabled:opacity-50"
+          className="mt-2 w-full rounded-card bg-dusk py-2 text-sm font-semibold text-paper disabled:opacity-50"
         >
           {journalLoading ? 'Thinking…' : 'Get feedback'}
         </button>
@@ -304,25 +365,91 @@ export default function DailyTaskPage() {
           <p className="text-sm text-ink/40">Nothing on the list yet.</p>
         ) : (
           <ul className="divide-y divide-sage-light">
-            {tasks.map((t) => (
-              <li key={t.id} className="flex items-center justify-between py-2 text-sm">
-                <span>{t.title}</span>
-                <span className="text-xs text-ink/40">{t.due_date || 'No date'}</span>
-              </li>
-            ))}
+            {tasks.map((t) =>
+              editingId === t.id ? (
+                <li key={t.id} className="py-3">
+                  <input
+                    value={editDraft.title}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, title: e.target.value }))}
+                    className="w-full rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="date"
+                      value={editDraft.due_date}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, due_date: e.target.value }))}
+                      className="flex-1 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-xs"
+                    />
+                    <select
+                      value={editDraft.priority}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, priority: e.target.value }))}
+                      className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-xs"
+                    >
+                      {PRIORITIES.map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => saveEdit(t.id)} className="rounded-card bg-sage px-3 py-1.5 text-xs font-semibold text-paper">
+                      Save
+                    </button>
+                    <button onClick={cancelEdit} className="rounded-card bg-sage-light px-3 py-1.5 text-xs font-semibold text-sage-dark">
+                      Cancel
+                    </button>
+                  </div>
+                </li>
+              ) : (
+                <li key={t.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate">{t.title}</span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_TONE[t.priority] || PRIORITY_TONE.Moderate}`}>
+                        {t.priority || 'Moderate'}
+                      </span>
+                    </div>
+                    <span className="text-xs text-ink/40">{t.due_date || 'No date'}</span>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button onClick={() => completeTask(t.id)} className="rounded-card bg-sage px-2.5 py-1 text-xs font-semibold text-paper">
+                      Complete
+                    </button>
+                    <button onClick={() => startEdit(t)} className="rounded-card bg-sage-light px-2.5 py-1 text-xs font-semibold text-sage-dark">
+                      Edit
+                    </button>
+                  </div>
+                </li>
+              )
+            )}
           </ul>
         )}
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 space-y-2">
           <input
             value={newTask}
             onChange={(e) => setNewTask(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addTask()}
             placeholder="Add a task…"
-            className="flex-1 rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
+            className="w-full rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
           />
-          <button onClick={addTask} className="rounded-card bg-sage px-4 py-1.5 text-sm font-semibold text-paper">
-            Add
-          </button>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={newTaskDue}
+              onChange={(e) => setNewTaskDue(e.target.value)}
+              className="flex-1 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+            />
+            <select
+              value={newTaskPriority}
+              onChange={(e) => setNewTaskPriority(e.target.value)}
+              className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+            >
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <button onClick={addTask} className="rounded-card bg-sage px-4 py-1.5 text-sm font-semibold text-paper">
+              Add
+            </button>
+          </div>
         </div>
       </Card>
 
