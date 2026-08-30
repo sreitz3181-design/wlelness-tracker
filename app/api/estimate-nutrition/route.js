@@ -17,10 +17,10 @@ export async function POST(request) {
 Name: ${name}
 Ingredients: ${ingredients.join(', ')}
 
-Give calories, fat in grams, and sodium in milligrams, per serving (assume the ingredient list serves about 4 unless it clearly implies otherwise). These are estimates from an ingredient list with no brand or exact-quantity data — be reasonable, not falsely precise.
+Give calories and sodium in milligrams, per serving (assume the ingredient list serves about 4 unless it clearly implies otherwise). These are estimates from an ingredient list with no brand or exact-quantity data — be reasonable, not falsely precise. Sodium especially is a rough estimate.
 
 Respond with ONLY valid JSON, no other text, in exactly this shape:
-{"calories": number, "fat_g": number, "sodium_mg": number}`
+{"calories": number, "sodium_mg": number}`
 
   try {
     const response = await anthropic.messages.create({

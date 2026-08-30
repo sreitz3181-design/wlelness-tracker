@@ -1,25 +1,31 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
 import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
+import { CATEGORY_SLOT_LIMITS, emptySlot } from '../../lib/mealLibrary'
+
+function recipeIngredients(recipe, slot) {
+  if (!recipe) return []
+  return slot?.ingredients || recipe.ingredients || []
+}
 
 export default function WeeklyPlannerPage() {
   const [userId, setUserId] = useState(null)
   const [recipes, setRecipes] = useState([])
-  const [selected, setSelected] = useState(Array(7).fill(''))
+  const [dinnerSlots, setDinnerSlots] = useState(Array.from({ length: 7 }, emptySlot))
+  const [breakfastSlots, setBreakfastSlots] = useState([])
+  const [lunchSlots, setLunchSlots] = useState([])
+  const [snackSlots, setSnackSlots] = useState([])
   const [shoppingList, setShoppingList] = useState([])
   const [sermonNotes, setSermonNotes] = useState('')
   const [weight, setWeight] = useState('')
   const [latestWeighIn, setLatestWeighIn] = useState(null)
-  const [suggestions, setSuggestions] = useState([])
-  const [suggestLoading, setSuggestLoading] = useState(false)
-  const [suggestError, setSuggestError] = useState('')
-  const [addedNames, setAddedNames] = useState([])
-  const [estimatingId, setEstimatingId] = useState(null)
+  const [savedNote, setSavedNote] = useState(false)
   const [loading, setLoading] = useState(true)
   const weekStart = mondayOfWeekISO()
 
@@ -40,7 +46,10 @@ export default function WeeklyPlannerPage() {
         .eq('user_id', uid)
         .eq('week_start', weekStart)
         .maybeSingle()
-      if (plan?.meal_slots) setSelected(plan.meal_slots)
+      if (plan?.dinner_slots?.length) setDinnerSlots(plan.dinner_slots)
+      if (plan?.breakfast_slots) setBreakfastSlots(plan.breakfast_slots)
+      if (plan?.lunch_slots) setLunchSlots(plan.lunch_slots)
+      if (plan?.snack_slots) setSnackSlots(plan.snack_slots)
       if (plan?.shopping_list) setShoppingList(plan.shopping_list)
 
       const { data: sermon } = await supabase
@@ -76,21 +85,6 @@ export default function WeeklyPlannerPage() {
     setWeight('')
   }
 
-  function updateSlot(i, recipeId) {
-    setSelected((prev) => prev.map((v, idx) => (idx === i ? recipeId : v)))
-  }
-
-  async function generateShoppingList() {
-    const chosen = selected.filter(Boolean).map((id) => recipes.find((r) => r.id === id)).filter(Boolean)
-    const all = chosen.flatMap((r) => r.ingredients || [])
-    const deduped = Array.from(new Set(all))
-    setShoppingList(deduped)
-    await supabase.from('weekly_plans').upsert(
-      { user_id: userId, week_start: weekStart, meal_slots: selected, shopping_list: deduped },
-      { onConflict: 'user_id,week_start' }
-    )
-  }
-
   async function saveSermonNotes() {
     await supabase.from('sermon_notes').upsert(
       { user_id: userId, week_start: weekStart, raw_notes: sermonNotes },
@@ -98,128 +92,210 @@ export default function WeeklyPlannerPage() {
     )
   }
 
-  async function getSuggestions() {
-    setSuggestLoading(true)
-    setSuggestError('')
-    try {
-      const res = await fetch('/api/suggest-meals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ existingRecipeNames: recipes.map((r) => r.name) }),
-      })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setSuggestions(data.meals || [])
-      setAddedNames([])
-    } catch (err) {
-      setSuggestError('Could not generate suggestions right now — try again in a moment.')
-    } finally {
-      setSuggestLoading(false)
-    }
+  const settersByCategory = { Dinner: setDinnerSlots, Breakfast: setBreakfastSlots, Lunch: setLunchSlots, Snacks: setSnackSlots }
+  const slotsByCategory = { Dinner: dinnerSlots, Breakfast: breakfastSlots, Lunch: lunchSlots, Snacks: snackSlots }
+
+  function addSlot(category) {
+    const setter = settersByCategory[category]
+    setter((prev) => (prev.length >= CATEGORY_SLOT_LIMITS[category] ? prev : [...prev, emptySlot()]))
   }
 
-  async function addSuggestionToLibrary(meal) {
-    const { data, error } = await supabase
-      .from('recipes')
-      .insert({
+  function removeSlot(category, index) {
+    settersByCategory[category]((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function selectRecipe(category, index, recipeId) {
+    settersByCategory[category]((prev) => prev.map((s, i) => (i === index ? { recipeId, ingredients: null } : s)))
+  }
+
+  function selectLeftover(index, dinnerIndex) {
+    setLunchSlots((prev) => prev.map((s, i) => (i === index ? { type: 'leftover', dinnerIndex } : s)))
+  }
+
+  function updateSubstitution(category, index, ingredientIndex, value) {
+    settersByCategory[category]((prev) =>
+      prev.map((s, i) => {
+        if (i !== index) return s
+        const recipe = recipes.find((r) => r.id === s.recipeId)
+        const base = s.ingredients || recipe?.ingredients || []
+        const next = [...base]
+        next[ingredientIndex] = value
+        return { ...s, ingredients: next }
+      })
+    )
+  }
+
+  async function saveIngredientToLibrary(category, index, ingredientIndex) {
+    const slot = slotsByCategory[category][index]
+    const recipe = recipes.find((r) => r.id === slot.recipeId)
+    if (!recipe || !slot.ingredients) return
+    const newIngredients = [...(recipe.ingredients || [])]
+    newIngredients[ingredientIndex] = slot.ingredients[ingredientIndex]
+    await supabase.from('recipes').update({ ingredients: newIngredients }).eq('id', recipe.id)
+    setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? { ...r, ingredients: newIngredients } : r)))
+  }
+
+  async function generateShoppingList() {
+    const collect = (slots, category) =>
+      slots.flatMap((slot) => {
+        if (category === 'Lunch' && slot.type === 'leftover') return [] // no new ingredients
+        const recipe = recipes.find((r) => r.id === slot.recipeId)
+        return recipeIngredients(recipe, slot)
+      })
+
+    const all = [
+      ...collect(dinnerSlots, 'Dinner'),
+      ...collect(breakfastSlots, 'Breakfast'),
+      ...collect(lunchSlots, 'Lunch'),
+      ...collect(snackSlots, 'Snacks'),
+    ]
+    const deduped = Array.from(new Set(all))
+    setShoppingList(deduped)
+    await supabase.from('weekly_plans').upsert(
+      {
         user_id: userId,
-        name: meal.name,
-        ingredients: meal.ingredients,
-        calories: meal.calorieEstimate ?? null,
-        fat_g: meal.fatEstimate ?? null,
-        sodium_mg: meal.sodiumEstimate ?? null,
-      })
-      .select()
-      .single()
-    if (!error && data) {
-      setRecipes((prev) => [...prev, data])
-      setAddedNames((prev) => [...prev, meal.name])
-    }
-  }
-
-  async function estimateNutrition(recipe) {
-    setEstimatingId(recipe.id)
-    try {
-      const res = await fetch('/api/estimate-nutrition', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: recipe.name, ingredients: recipe.ingredients }),
-      })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      await supabase.from('recipes').update({ calories: data.calories, fat_g: data.fat_g, sodium_mg: data.sodium_mg }).eq('id', recipe.id)
-      setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? { ...r, calories: data.calories, fat_g: data.fat_g, sodium_mg: data.sodium_mg } : r)))
-    } catch (err) {
-      // Silent — the "Estimate nutrition" button just stays available to retry.
-    } finally {
-      setEstimatingId(null)
-    }
+        week_start: weekStart,
+        dinner_slots: dinnerSlots,
+        breakfast_slots: breakfastSlots,
+        lunch_slots: lunchSlots,
+        snack_slots: snackSlots,
+        shopping_list: deduped,
+      },
+      { onConflict: 'user_id,week_start' }
+    )
+    setSavedNote(true)
+    setTimeout(() => setSavedNote(false), 2500)
   }
 
   if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading planner…</main>
+
+  function renderSlotEditor(category, slot, index) {
+    const categoryRecipes = recipes.filter((r) => (r.category || 'Dinner') === category)
+    const recipe = recipes.find((r) => r.id === slot.recipeId)
+    const ingredients = recipeIngredients(recipe, slot)
+
+    return (
+      <div key={index} className="rounded-card border border-sage-light bg-white/70 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <select
+            value={
+              category === 'Lunch' && slot.type === 'leftover' ? `leftover:${slot.dinnerIndex}` : slot.recipeId || ''
+            }
+            onChange={(e) => {
+              const val = e.target.value
+              if (val.startsWith('leftover:')) {
+                selectLeftover(index, Number(val.split(':')[1]))
+              } else {
+                selectRecipe(category, index, val)
+              }
+            }}
+            className="flex-1 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+          >
+            <option value="">Choose a meal…</option>
+            {categoryRecipes.length === 0 && (
+              <option disabled>No {category.toLowerCase()} meals yet — add some in the Library</option>
+            )}
+            {categoryRecipes.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+            {category === 'Lunch' && dinnerSlots.some((d) => d.recipeId) && (
+              <optgroup label="Leftovers">
+                {dinnerSlots.map((d, di) => {
+                  const dRecipe = recipes.find((r) => r.id === d.recipeId)
+                  if (!dRecipe) return null
+                  return (
+                    <option key={di} value={`leftover:${di}`}>
+                      Leftover: {dRecipe.name}
+                    </option>
+                  )
+                })}
+              </optgroup>
+            )}
+          </select>
+          <button onClick={() => removeSlot(category, index)} className="shrink-0 text-xs text-ink/30">
+            ×
+          </button>
+        </div>
+
+        {category === 'Lunch' && slot.type === 'leftover' && (
+          <p className="mt-2 text-xs text-ink/40">
+            {dinnerSlots[slot.dinnerIndex]?.recipeId
+              ? 'Uses that dinner\u2019s ingredients — nothing new added to the shopping list.'
+              : 'That dinner slot is empty — pick a dinner meal first.'}
+          </p>
+        )}
+
+        {recipe && !(category === 'Lunch' && slot.type === 'leftover') && ingredients.length > 0 && (
+          <div className="mt-2 space-y-1">
+            <p className="text-[11px] uppercase tracking-wide text-ink/40">Ingredients (editable for this week)</p>
+            {ingredients.map((ing, ii) => (
+              <div key={ii} className="flex items-center gap-1.5">
+                <input
+                  value={ing}
+                  onChange={(e) => updateSubstitution(category, index, ii, e.target.value)}
+                  className="flex-1 rounded-card border border-sage-light bg-white/70 px-2 py-1 text-xs"
+                />
+                {slot.ingredients && slot.ingredients[ii] !== recipe.ingredients?.[ii] && (
+                  <button
+                    onClick={() => saveIngredientToLibrary(category, index, ii)}
+                    className="shrink-0 rounded-card bg-sage-light px-2 py-1 text-[10px] font-semibold text-sage-dark"
+                  >
+                    Save to Library
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function renderCategorySection(category, slots, title) {
+    return (
+      <Card className="mt-4">
+        <SectionLabel>{title}</SectionLabel>
+        <div className="space-y-3">
+          {slots.map((slot, i) => renderSlotEditor(category, slot, i))}
+        </div>
+        {category !== 'Dinner' && slots.length < CATEGORY_SLOT_LIMITS[category] && (
+          <button
+            onClick={() => addSlot(category)}
+            className="mt-3 w-full rounded-card bg-sage-light py-2 text-xs font-semibold text-sage-dark"
+          >
+            + Add {category.toLowerCase()} ({slots.length}/{CATEGORY_SLOT_LIMITS[category]})
+          </button>
+        )}
+      </Card>
+    )
+  }
 
   return (
     <main className="px-4 pt-8">
       <p className="text-xs uppercase tracking-wide text-ink/40">Week of {weekStart}</p>
       <h1 className="font-display text-2xl">Weekly Planner</h1>
 
-      <Card className="mt-5">
-        <SectionLabel>Pick meals for the coming week</SectionLabel>
-        <div className="space-y-3">
-          {selected.map((val, i) => {
-            const recipe = recipes.find((r) => r.id === val)
-            return (
-              <div key={i}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-ink/70">Meal {i + 1}</span>
-                  <select
-                    value={val}
-                    onChange={(e) => updateSlot(i, e.target.value)}
-                    className="w-56 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
-                  >
-                    <option value="">Choose a meal…</option>
-                    {recipes.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {recipe && (
-                  <div className="mt-1 flex items-center justify-end gap-2 text-right">
-                    {recipe.calories ? (
-                      <p className="text-xs text-ink/40">
-                        {recipe.calories} cal · {recipe.fat_g}g fat · {recipe.sodium_mg}mg sodium (rough est.)
-                      </p>
-                    ) : (
-                      <button
-                        onClick={() => estimateNutrition(recipe)}
-                        disabled={estimatingId === recipe.id}
-                        className="text-xs font-semibold text-dusk disabled:opacity-50"
-                      >
-                        {estimatingId === recipe.id ? 'Estimating…' : 'Estimate nutrition'}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+      {renderCategorySection('Dinner', dinnerSlots, 'Dinner — 7 for the week')}
+      {renderCategorySection('Breakfast', breakfastSlots, 'Breakfast (optional)')}
+      {renderCategorySection('Lunch', lunchSlots, 'Lunch (optional — includes leftovers)')}
+      {renderCategorySection('Snacks', snackSlots, 'Snacks (optional)')}
+
+      <div className="mt-4 flex items-center gap-2">
         <button
           onClick={generateShoppingList}
-          className="mt-4 w-full rounded-card bg-sage py-2.5 text-sm font-semibold text-paper"
+          className="flex-1 rounded-card bg-sage py-2.5 text-sm font-semibold text-paper"
         >
           Generate shopping list
         </button>
-      </Card>
+        {savedNote && <span className="text-xs text-sage-dark">Saved ✓</span>}
+      </div>
 
       {shoppingList.length > 0 && (
         <Card className="mt-4">
           <SectionLabel>Shopping list</SectionLabel>
           <ul className="grid grid-cols-2 gap-x-4 text-sm text-ink/80">
-            {shoppingList.map((item) => (
-              <li key={item} className="py-0.5">
+            {shoppingList.map((item, i) => (
+              <li key={`${item}-${i}`} className="py-0.5">
                 • {item}
               </li>
             ))}
@@ -227,49 +303,9 @@ export default function WeeklyPlannerPage() {
         </Card>
       )}
 
-      <Card className="mt-4">
-        <div className="flex items-center justify-between">
-          <SectionLabel>Suggest new meals</SectionLabel>
-          <button
-            onClick={getSuggestions}
-            disabled={suggestLoading}
-            className="rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper disabled:opacity-50"
-          >
-            {suggestLoading ? 'Thinking…' : 'Suggest meals'}
-          </button>
-        </div>
-        {suggestError && <p className="text-xs text-rose">{suggestError}</p>}
-        {suggestions.length === 0 && !suggestLoading && !suggestError && (
-          <p className="text-sm text-ink/40">Get a few new ideas in the same style as your current recipes, sized for your calorie goals.</p>
-        )}
-        <div className="space-y-3">
-          {suggestions.map((meal) => {
-            const added = addedNames.includes(meal.name)
-            return (
-              <div key={meal.name} className="rounded-card border border-sage-light bg-white/70 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-ink">{meal.name}</p>
-                    <p className="text-xs text-ink/50">
-                      ~{meal.calorieEstimate} cal · {meal.fatEstimate}g fat · {meal.sodiumEstimate}mg sodium (rough est.)
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => addSuggestionToLibrary(meal)}
-                    disabled={added}
-                    className={`shrink-0 rounded-card px-3 py-1.5 text-xs font-semibold ${
-                      added ? 'bg-sage-light text-sage-dark' : 'bg-sage text-paper'
-                    }`}
-                  >
-                    {added ? 'Added ✓' : 'Add to library'}
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-ink/60">{meal.ingredients.join(', ')}</p>
-              </div>
-            )
-          })}
-        </div>
-      </Card>
+      <Link href="/library" className="mt-4 block rounded-card bg-dusk py-2.5 text-center text-sm font-semibold text-paper">
+        Manage Meal Library
+      </Link>
 
       <Card className="mt-4">
         <SectionLabel>Weekly weigh-in</SectionLabel>

@@ -1,22 +1,25 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
 import { todayISO } from '../../lib/dates'
 import { getCurrentUserId, saveTodayFields, getLatestWeight } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
 
-const MEAL_LABELS = [
-  { key: 'breakfast', label: 'Breakfast' },
-  { key: 'lunch', label: 'Lunch' },
-  { key: 'dinner', label: 'Dinner' },
-  { key: 'snacks', label: 'Snacks' },
+const MEALS = [
+  { key: 'breakfast', label: 'Breakfast', category: 'Breakfast' },
+  { key: 'lunch', label: 'Lunch', category: 'Lunch' },
+  { key: 'dinner', label: 'Dinner', category: 'Dinner' },
+  { key: 'snacks', label: 'Snacks', category: 'Snacks' },
 ]
 
 export default function NutritionPage() {
   const [userId, setUserId] = useState(null)
-  const [actual, setActual] = useState({})
+  const [recipes, setRecipes] = useState([])
+  const [selections, setSelections] = useState({})
+  const [nutritionActual, setNutritionActual] = useState({})
   const [water, setWater] = useState('')
   const [weight, setWeight] = useState(null)
   const [medications, setMedications] = useState([])
@@ -29,15 +32,18 @@ export default function NutritionPage() {
       const uid = await getCurrentUserId()
       setUserId(uid)
       if (!uid) return
-      const [{ data }, latestWeight, { data: meds }, { data: logs }] = await Promise.all([
-        supabase.from('daily_logs').select('nutrition_actual').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
+      const [{ data }, latestWeight, { data: recipeRows }, { data: meds }, { data: logs }] = await Promise.all([
+        supabase.from('daily_logs').select('nutrition_actual, nutrition_selections').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
         getLatestWeight(uid),
+        supabase.from('recipes').select('*').eq('user_id', uid),
         supabase.from('medications').select('*').eq('user_id', uid).eq('active', true).order('created_at', { ascending: true }),
         supabase.from('medication_logs').select('medication_id, taken').eq('user_id', uid).eq('log_date', todayISO()),
       ])
-      setActual(data?.nutrition_actual || {})
       setWater(data?.nutrition_actual?.water_oz ?? '')
+      setNutritionActual(data?.nutrition_actual || {})
+      setSelections(data?.nutrition_selections || {})
       setWeight(latestWeight)
+      setRecipes(recipeRows || [])
       setMedications(meds || [])
       const takenMap = {}
       ;(logs || []).forEach((l) => {
@@ -49,17 +55,20 @@ export default function NutritionPage() {
     load()
   }, [])
 
-  async function saveMeal(key, value) {
-    const next = { ...actual, [key]: value === '' ? null : Number(value) }
-    setActual(next)
-    await saveTodayFields(userId, { nutrition_actual: next })
+  async function selectMeal(key, recipeId) {
+    const nextSelections = { ...selections, [key]: recipeId }
+    setSelections(nextSelections)
+    const recipe = recipes.find((r) => r.id === recipeId)
+    const nextActual = { ...nutritionActual, [key]: recipe?.calories ?? null }
+    setNutritionActual(nextActual)
+    await saveTodayFields(userId, { nutrition_selections: nextSelections, nutrition_actual: nextActual })
   }
 
   async function saveWater(value) {
     setWater(value)
-    const next = { ...actual, water_oz: value === '' ? null : Number(value) }
-    setActual(next)
-    await saveTodayFields(userId, { nutrition_actual: next })
+    const nextActual = { ...nutritionActual, water_oz: value === '' ? null : Number(value) }
+    setNutritionActual(nextActual)
+    await saveTodayFields(userId, { nutrition_actual: nextActual })
   }
 
   async function addMedication() {
@@ -105,34 +114,49 @@ export default function NutritionPage() {
 
       {calorieTargets && (
         <Card className="mt-5">
-          <SectionLabel>Calories by meal</SectionLabel>
-          <table className="w-full">
-            <thead>
-              <tr className="text-left text-[11px] text-ink/40">
-                <th className="pb-2 font-normal">Meal</th>
-                <th className="pb-2 text-right font-normal">Goal</th>
-                <th className="pb-2 text-right font-normal">Actual</th>
-              </tr>
-            </thead>
-            <tbody>
-              {MEAL_LABELS.map((m) => (
-                <tr key={m.key} className="border-b border-sage-light/70 last:border-0">
-                  <td className="py-2 text-sm">{m.label}</td>
-                  <td className="py-2 px-2 text-right font-mono text-sm text-ink/60">
-                    {calorieTargets.meals[m.key]} cal
-                  </td>
-                  <td className="py-2 pl-2 text-right">
-                    <input
-                      type="number"
-                      value={actual[m.key] ?? ''}
-                      onChange={(e) => saveMeal(m.key, e.target.value)}
-                      className="w-20 rounded-card border border-sage-light bg-white/70 px-2 py-1 text-right font-mono text-sm"
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SectionLabel>Meals today</SectionLabel>
+          <div className="space-y-4">
+            {MEALS.map((m) => {
+              const categoryRecipes = recipes.filter((r) => (r.category || 'Dinner') === m.category)
+              const selected = recipes.find((r) => r.id === selections[m.key])
+              const target = calorieTargets.meals[m.key]
+              const diff = selected?.calories != null ? selected.calories - target : null
+              return (
+                <div key={m.key}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-ink/70">{m.label}</span>
+                    <select
+                      value={selections[m.key] || ''}
+                      onChange={(e) => selectMeal(m.key, e.target.value)}
+                      className="w-52 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Choose a meal…</option>
+                      {categoryRecipes.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {categoryRecipes.length === 0 && (
+                    <p className="mt-1 text-right text-xs text-ink/40">
+                      No {m.category.toLowerCase()} meals in your library yet —{' '}
+                      <Link href="/library" className="font-semibold text-dusk">add some</Link>
+                    </p>
+                  )}
+                  {selected && (
+                    <p className="mt-1 text-right text-xs text-ink/50">
+                      {selected.calories != null ? (
+                        <>
+                          {selected.calories} cal vs {target} target ({diff > 0 ? '+' : ''}{diff} {diff > 0 ? 'over' : diff < 0 ? 'under' : 'on target'})
+                        </>
+                      ) : (
+                        <>No calorie estimate yet — <Link href="/library" className="font-semibold text-dusk">estimate it in the Library</Link></>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
           <p className="mt-3 text-xs text-ink/40">
             Daily target: {calorieTargets.dailyTarget} cal (~{calorieTargets.maintenance} cal estimated
             maintenance, {calorieTargets.deficit} cal/day deficit — capped at a safer pace than your stated

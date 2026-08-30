@@ -1,8 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 
+const CATEGORY_GUIDANCE = {
+  Breakfast: 'Breakfast-style meals — quick to prepare, roughly 350-550 calories per serving.',
+  Lunch: 'Lunch-style meals — simple, portable-friendly where possible, roughly 450-650 calories per serving.',
+  Dinner: 'Dinner-style entrees, roughly 500-700 calories per serving.',
+  Snacks: 'Snack-sized options, roughly 150-300 calories per serving — quick, minimal prep.',
+}
+
 export async function POST(request) {
-  const { existingRecipeNames } = await request.json()
+  const { existingRecipeNames, category } = await request.json()
+  const cat = CATEGORY_GUIDANCE[category] ? category : 'Dinner'
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
@@ -13,18 +21,20 @@ export async function POST(request) {
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  const prompt = `You are suggesting new dinner-style recipes for someone's personal meal library, in the same style as recipes they already have.
+  const prompt = `You are suggesting new ${cat} recipes for someone's personal meal library, in the same style as recipes they already have.
 
-Their existing recipes: ${existingRecipeNames.join(', ') || '(none yet)'}
+Their existing ${cat} recipes: ${existingRecipeNames.join(', ') || '(none yet)'}
 
-Their style, based on what's already in the library: protein-forward (mostly chicken, some salmon/turkey/beef), simple ingredient lists (4-8 items), minimal prep, health-conscious. They're working toward a weight-loss goal, so meals should be reasonably calorie-conscious (roughly 500-700 calories per serving) without being austere.
+Category guidance: ${CATEGORY_GUIDANCE[cat]}
 
-Suggest 6 NEW meals that are NOT already in their list and don't just rename an existing one with one ingredient swapped — genuinely different enough to add variety (different proteins, cuisines, or cooking styles than what's already there).
+Their overall style, based on their library: protein-forward, simple ingredient lists (4-8 items), minimal prep, health-conscious. They're working toward a weight-loss goal, so lean that direction without being austere.
 
-For each: a short meal name, a simple ingredient list (matching the style of the examples — plain ingredient names, quantities only where it matters like "2 Chicken Breast"), and per-serving estimates for calories, fat (grams), and sodium (milligrams). These are estimates from an ingredient list with no brand or exact-quantity data — reasonable, not falsely precise.
+Suggest 6 NEW meals that are NOT already in their list and don't just rename an existing one with one ingredient swapped — genuinely different enough to add variety.
+
+For each: a short meal name, a simple ingredient list (matching the style of the examples — plain ingredient names, quantities only where it matters like "2 Chicken Breast"), and per-serving estimates for calories and sodium (milligrams). These are estimates from an ingredient list with no brand or exact-quantity data — reasonable, not falsely precise. Sodium especially is a rough estimate.
 
 Respond with ONLY valid JSON, no other text, in exactly this shape:
-{"meals": [{"name": "string", "ingredients": ["string"], "calorieEstimate": number, "fatEstimate": number, "sodiumEstimate": number}]}`
+{"meals": [{"name": "string", "ingredients": ["string"], "calorieEstimate": number, "sodiumEstimate": number}]}`
 
   try {
     const response = await anthropic.messages.create({
@@ -37,7 +47,7 @@ Respond with ONLY valid JSON, no other text, in exactly this shape:
     const cleaned = text.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(cleaned)
 
-    return NextResponse.json(parsed)
+    return NextResponse.json({ meals: parsed.meals || [], category: cat })
   } catch (err) {
     console.error('suggest-meals error:', err)
     return NextResponse.json({ error: 'Failed to generate meal suggestions' }, { status: 500 })
