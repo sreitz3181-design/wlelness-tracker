@@ -7,7 +7,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
-import { CATEGORY_SLOT_LIMITS, DAY_NAMES, emptySlot } from '../../lib/mealLibrary'
+import { CATEGORY_SLOT_LIMITS, DAY_NAMES, MEDICATION_TIMES, emptySlot } from '../../lib/mealLibrary'
 
 function recipeIngredients(recipe, slot) {
   if (!recipe) return []
@@ -26,6 +26,10 @@ export default function WeeklyPlannerPage() {
   const [weight, setWeight] = useState('')
   const [latestWeighIn, setLatestWeighIn] = useState(null)
   const [savedNote, setSavedNote] = useState(false)
+  const [medications, setMedications] = useState([])
+  const [newMed, setNewMed] = useState({ name: '', dose: '', time_of_day: 'Morning' })
+  const [editingMedId, setEditingMedId] = useState(null)
+  const [editMedDraft, setEditMedDraft] = useState({ name: '', dose: '', time_of_day: 'Morning' })
   const [loading, setLoading] = useState(true)
   const weekStart = mondayOfWeekISO()
 
@@ -71,6 +75,14 @@ export default function WeeklyPlannerPage() {
         .maybeSingle()
       setLatestWeighIn(lastWeighIn || null)
 
+      const { data: meds } = await supabase
+        .from('medications')
+        .select('*')
+        .eq('user_id', uid)
+        .eq('active', true)
+        .order('created_at', { ascending: true })
+      setMedications(meds || [])
+
       setLoading(false)
     }
     load()
@@ -92,6 +104,41 @@ export default function WeeklyPlannerPage() {
       { user_id: userId, week_start: weekStart, raw_notes: sermonNotes },
       { onConflict: 'user_id,week_start' }
     )
+  }
+
+  // Medications are standing, recurring entries — not tied to a specific
+  // week. Setting one up here carries forward day to day and week to week
+  // automatically; daily "taken" tracking happens on the Nutrition screen.
+  async function addMedication() {
+    if (!newMed.name.trim() || !userId) return
+    const { data } = await supabase
+      .from('medications')
+      .insert({ user_id: userId, name: newMed.name.trim(), dose: newMed.dose.trim() || null, time_of_day: newMed.time_of_day })
+      .select()
+      .single()
+    if (data) setMedications((prev) => [...prev, data])
+    setNewMed({ name: '', dose: '', time_of_day: 'Morning' })
+  }
+
+  function startEditMed(med) {
+    setEditingMedId(med.id)
+    setEditMedDraft({ name: med.name, dose: med.dose || '', time_of_day: MEDICATION_TIMES.includes(med.time_of_day) ? med.time_of_day : 'Anytime' })
+  }
+
+  function cancelEditMed() {
+    setEditingMedId(null)
+  }
+
+  async function saveEditMed(id) {
+    const updates = { name: editMedDraft.name.trim(), dose: editMedDraft.dose.trim() || null, time_of_day: editMedDraft.time_of_day }
+    setMedications((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)))
+    setEditingMedId(null)
+    await supabase.from('medications').update(updates).eq('id', id)
+  }
+
+  async function removeMedication(id) {
+    setMedications((prev) => prev.filter((m) => m.id !== id))
+    await supabase.from('medications').update({ active: false }).eq('id', id)
   }
 
   const settersByCategory = { Dinner: setDinnerSlots, Breakfast: setBreakfastSlots, Lunch: setLunchSlots, Snacks: setSnackSlots }
@@ -330,6 +377,102 @@ export default function WeeklyPlannerPage() {
       <Link href="/library" className="mt-4 block rounded-card bg-dusk py-2.5 text-center text-sm font-semibold text-paper">
         Manage Meal Library
       </Link>
+
+      <Card className="mt-4">
+        <SectionLabel>Medications &amp; supplements</SectionLabel>
+        <p className="mb-3 text-xs text-ink/40">
+          Set these up once — they carry forward automatically, day to day and week to week. Daily &ldquo;taken&rdquo; check-off happens on the Nutrition screen.
+        </p>
+        {medications.length === 0 ? (
+          <p className="text-sm text-ink/40">Nothing added yet.</p>
+        ) : (
+          <ul className="divide-y divide-sage-light">
+            {medications.map((med) =>
+              editingMedId === med.id ? (
+                <li key={med.id} className="py-3">
+                  <input
+                    value={editMedDraft.name}
+                    onChange={(e) => setEditMedDraft((d) => ({ ...d, name: e.target.value }))}
+                    className="w-full rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+                  />
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <input
+                      value={editMedDraft.dose}
+                      onChange={(e) => setEditMedDraft((d) => ({ ...d, dose: e.target.value }))}
+                      placeholder="Dose"
+                      className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-xs"
+                    />
+                    <select
+                      value={editMedDraft.time_of_day}
+                      onChange={(e) => setEditMedDraft((d) => ({ ...d, time_of_day: e.target.value }))}
+                      className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-xs"
+                    >
+                      {MEDICATION_TIMES.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => saveEditMed(med.id)} className="rounded-card bg-sage px-3 py-1.5 text-xs font-semibold text-paper">
+                      Save
+                    </button>
+                    <button onClick={cancelEditMed} className="rounded-card bg-sage-light px-3 py-1.5 text-xs font-semibold text-sage-dark">
+                      Cancel
+                    </button>
+                  </div>
+                </li>
+              ) : (
+                <li key={med.id} className="py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-ink">{med.name}</p>
+                      <p className="text-xs text-ink/40">
+                        {[med.dose, med.time_of_day || 'Anytime'].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      <button onClick={() => startEditMed(med)} className="rounded-card bg-sage-light px-2.5 py-1 text-xs font-semibold text-sage-dark">
+                        Edit
+                      </button>
+                      <button onClick={() => removeMedication(med.id)} className="text-xs text-ink/30">
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              )
+            )}
+          </ul>
+        )}
+        <div className="mt-3 space-y-2">
+          <input
+            value={newMed.name}
+            onChange={(e) => setNewMed((m) => ({ ...m, name: e.target.value }))}
+            placeholder="Name (e.g. Vitamin D)"
+            className="w-full rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              value={newMed.dose}
+              onChange={(e) => setNewMed((m) => ({ ...m, dose: e.target.value }))}
+              placeholder="Dose (e.g. 2000 IU)"
+              className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+            />
+            <select
+              value={newMed.time_of_day}
+              onChange={(e) => setNewMed((m) => ({ ...m, time_of_day: e.target.value }))}
+              className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+            >
+              {MEDICATION_TIMES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <button onClick={addMedication} className="w-full rounded-card bg-sage py-1.5 text-sm font-semibold text-paper">
+            Add
+          </button>
+        </div>
+      </Card>
 
       <Card className="mt-4">
         <SectionLabel>Weekly weigh-in</SectionLabel>

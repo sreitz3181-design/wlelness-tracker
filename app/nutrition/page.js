@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { todayISO, mondayOfWeekISO, mondayBasedDayIndex } from '../../lib/dates'
 import { getCurrentUserId, saveTodayFields, getLatestWeight } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
+import { MEDICATION_TIMES } from '../../lib/mealLibrary'
 
 const MEALS = [
   { key: 'breakfast', label: 'Breakfast', category: 'Breakfast' },
@@ -25,7 +26,6 @@ export default function NutritionPage() {
   const [weight, setWeight] = useState(null)
   const [medications, setMedications] = useState([])
   const [takenToday, setTakenToday] = useState({})
-  const [newMed, setNewMed] = useState({ name: '', dose: '', time_of_day: '' })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export default function NutritionPage() {
       let appliedDefault = false
 
       MEALS.forEach((m) => {
-        if (nextSelections[m.key]) return // already chosen today, leave it alone
+        if (nextSelections[m.key]) return
         const todaysSlot = slotsByKey[m.key].find((s) => s.day === todayIdx)
         if (!todaysSlot) return
         const recipeId =
@@ -85,6 +85,7 @@ export default function NutritionPage() {
       if (appliedDefault) {
         await saveTodayFields(uid, { nutrition_selections: nextSelections, nutrition_actual: nextActual })
       }
+
       setMedications(meds || [])
       const takenMap = {}
       ;(logs || []).forEach((l) => {
@@ -113,17 +114,6 @@ export default function NutritionPage() {
     await saveTodayFields(userId, { nutrition_actual: nextActual })
   }
 
-  async function addMedication() {
-    if (!newMed.name.trim() || !userId) return
-    const { data } = await supabase
-      .from('medications')
-      .insert({ user_id: userId, name: newMed.name.trim(), dose: newMed.dose.trim() || null, time_of_day: newMed.time_of_day.trim() || null })
-      .select()
-      .single()
-    if (data) setMedications((prev) => [...prev, data])
-    setNewMed({ name: '', dose: '', time_of_day: '' })
-  }
-
   async function toggleTaken(medId) {
     const next = !takenToday[medId]
     setTakenToday((prev) => ({ ...prev, [medId]: next }))
@@ -132,18 +122,15 @@ export default function NutritionPage() {
       .upsert({ user_id: userId, medication_id: medId, log_date: todayISO(), taken: next }, { onConflict: 'user_id,medication_id,log_date' })
   }
 
-  async function removeMedication(medId) {
-    setMedications((prev) => prev.filter((m) => m.id !== medId))
-    await supabase.from('medications').update({ active: false }).eq('id', medId)
-  }
-
   if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading nutrition…</main>
 
-  // Standard general-wellness guideline: roughly half your body weight in
-  // fluid ounces per day. Falls back to a placeholder note until a weigh-in
-  // has been logged on the Weekly Planner.
   const waterGoal = weight ? Math.round(weight * 0.5) : null
   const calorieTargets = computeCalorieTargets(weight)
+
+  const medGroups = MEDICATION_TIMES.map((time) => ({
+    time,
+    meds: medications.filter((m) => (m.time_of_day || 'Anytime') === time || (time === 'Anytime' && !MEDICATION_TIMES.includes(m.time_of_day))),
+  })).filter((g) => g.meds.length > 0)
 
   return (
     <main className="px-4 pt-8">
@@ -234,64 +221,39 @@ export default function NutritionPage() {
       <Card className="mt-4">
         <SectionLabel>Medications &amp; supplements</SectionLabel>
         <p className="mb-3 text-xs text-ink/40">
-          A simple log — this list isn&rsquo;t reviewed or commented on by the AI features elsewhere in the app.
+          Manage the list itself from the Weekly Planner. This is just today&rsquo;s check-off — not reviewed or commented on by the AI features elsewhere in the app.
         </p>
         {medications.length === 0 ? (
-          <p className="text-sm text-ink/40">Nothing added yet.</p>
+          <p className="text-sm text-ink/40">
+            Nothing set up yet — <Link href="/weekly-planner" className="font-semibold text-dusk">add some on the Weekly Planner</Link>.
+          </p>
         ) : (
-          <ul className="divide-y divide-sage-light">
-            {medications.map((med) => (
-              <li key={med.id} className="py-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium text-ink">{med.name}</p>
-                    <p className="text-xs text-ink/40">
-                      {[med.dose, med.time_of_day].filter(Boolean).join(' · ') || 'No dose/time set'}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      onClick={() => toggleTaken(med.id)}
-                      className={`rounded-card px-3 py-1.5 text-xs font-semibold ${
-                        takenToday[med.id] ? 'bg-sage text-paper' : 'bg-sage-light text-sage-dark'
-                      }`}
-                    >
-                      {takenToday[med.id] ? 'Taken ✓' : 'Mark taken'}
-                    </button>
-                    <button onClick={() => removeMedication(med.id)} className="text-xs text-ink/30">
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </li>
+          <div className="space-y-4">
+            {medGroups.map((group) => (
+              <div key={group.time}>
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/40">{group.time}</p>
+                <ul className="divide-y divide-sage-light">
+                  {group.meds.map((med) => (
+                    <li key={med.id} className="flex items-center justify-between gap-2 py-2">
+                      <div>
+                        <p className="text-sm font-medium text-ink">{med.name}</p>
+                        {med.dose && <p className="text-xs text-ink/40">{med.dose}</p>}
+                      </div>
+                      <button
+                        onClick={() => toggleTaken(med.id)}
+                        className={`shrink-0 rounded-card px-3 py-1.5 text-xs font-semibold ${
+                          takenToday[med.id] ? 'bg-sage text-paper' : 'bg-sage-light text-sage-dark'
+                        }`}
+                      >
+                        {takenToday[med.id] ? 'Taken ✓' : 'Mark taken'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
-        )}
-        <div className="mt-3 space-y-2">
-          <input
-            value={newMed.name}
-            onChange={(e) => setNewMed((m) => ({ ...m, name: e.target.value }))}
-            placeholder="Name (e.g. Vitamin D)"
-            className="w-full rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              value={newMed.dose}
-              onChange={(e) => setNewMed((m) => ({ ...m, dose: e.target.value }))}
-              placeholder="Dose (e.g. 2000 IU)"
-              className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
-            />
-            <input
-              value={newMed.time_of_day}
-              onChange={(e) => setNewMed((m) => ({ ...m, time_of_day: e.target.value }))}
-              placeholder="Time (e.g. Morning)"
-              className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
-            />
           </div>
-          <button onClick={addMedication} className="w-full rounded-card bg-sage py-1.5 text-sm font-semibold text-paper">
-            Add
-          </button>
-        </div>
+        )}
       </Card>
 
       <p className="mt-4 text-xs text-ink/40">
