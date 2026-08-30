@@ -228,7 +228,7 @@ export default function DailyTaskPage() {
     <main className="px-4 pt-8">
       <div className="rhythm-arc mb-6 h-1 w-16 rounded-full" />
       <p className="text-xs uppercase tracking-wide text-ink/40">{dateLabel}</p>
-      <h1 className="font-display text-2xl">Good morning</h1>
+      <h1 className="font-display text-2xl">Hello</h1>
 
       <Card className="mt-5">
         <SectionLabel>Spiritual health</SectionLabel>
@@ -305,7 +305,7 @@ export default function DailyTaskPage() {
         <SectionLabel>Mental health journal</SectionLabel>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-ink/50">What caused stress today?</label>
+            <label className="text-xs text-ink/50">What is causing you stress today?</label>
             <textarea
               value={journal.stress_cause}
               onChange={(e) => updateJournal('stress_cause', e.target.value)}
@@ -314,7 +314,7 @@ export default function DailyTaskPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-ink/50">What helped with your stress today?</label>
+            <label className="text-xs text-ink/50">What is helping with your stress level today?</label>
             <textarea
               value={journal.stress_helped}
               onChange={(e) => updateJournal('stress_helped', e.target.value)}
@@ -323,7 +323,7 @@ export default function DailyTaskPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-ink/50">What things helped your mental health today?</label>
+            <label className="text-xs text-ink/50">What things are helping your mental health today?</label>
             <textarea
               value={journal.mental_health_helpers}
               onChange={(e) => updateJournal('mental_health_helpers', e.target.value)}
@@ -332,7 +332,7 @@ export default function DailyTaskPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-ink/50">Anything else you want to share?</label>
+            <label className="text-xs text-ink/50">Is there anything else you want to share today?</label>
             <textarea
               value={journal.additional_share}
               onChange={(e) => updateJournal('additional_share', e.target.value)}
@@ -400,21 +400,19 @@ export default function DailyTaskPage() {
                   </div>
                 </li>
               ) : (
-                <li key={t.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate">{t.title}</span>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_TONE[t.priority] || PRIORITY_TONE.Moderate}`}>
-                        {t.priority || 'Moderate'}
-                      </span>
-                    </div>
-                    <span className="text-xs text-ink/40">{t.due_date || 'No date'}</span>
+                <li key={t.id} className="py-3">
+                  <p className="text-sm font-medium text-ink">{t.title}</p>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-ink/40">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_TONE[t.priority] || PRIORITY_TONE.Moderate}`}>
+                      {t.priority || 'Moderate'}
+                    </span>
+                    <span>{t.due_date || 'No date'}</span>
                   </div>
-                  <div className="flex shrink-0 gap-1.5">
-                    <button onClick={() => completeTask(t.id)} className="rounded-card bg-sage px-2.5 py-1 text-xs font-semibold text-paper">
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => completeTask(t.id)} className="flex-1 rounded-card bg-sage py-1.5 text-xs font-semibold text-paper">
                       Complete
                     </button>
-                    <button onClick={() => startEdit(t)} className="rounded-card bg-sage-light px-2.5 py-1 text-xs font-semibold text-sage-dark">
+                    <button onClick={() => startEdit(t)} className="flex-1 rounded-card bg-sage-light py-1.5 text-xs font-semibold text-sage-dark">
                       Edit
                     </button>
                   </div>
@@ -430,12 +428,12 @@ export default function DailyTaskPage() {
             placeholder="Add a task…"
             className="w-full rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
           />
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <input
               type="date"
               value={newTaskDue}
               onChange={(e) => setNewTaskDue(e.target.value)}
-              className="flex-1 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
+              className="rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
             />
             <select
               value={newTaskPriority}
@@ -446,10 +444,10 @@ export default function DailyTaskPage() {
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
-            <button onClick={addTask} className="rounded-card bg-sage px-4 py-1.5 text-sm font-semibold text-paper">
-              Add
-            </button>
           </div>
+          <button onClick={addTask} className="w-full rounded-card bg-sage py-1.5 text-sm font-semibold text-paper">
+            Add task
+          </button>
         </div>
       </Card>
 
