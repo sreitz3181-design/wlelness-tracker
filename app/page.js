@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
 import { Card, SectionLabel, RatingScale } from '../components/ui'
 import { supabase } from '../lib/supabaseClient'
 import { todayISO, mondayOfWeekISO } from '../lib/dates'
@@ -42,11 +41,7 @@ export default function DailyTaskPage() {
   const [reflectionLoading, setReflectionLoading] = useState(false)
   const [stressReflection, setStressReflection] = useState(null)
   const [stressReflectionLoading, setStressReflectionLoading] = useState(false)
-  const [calendarConnected, setCalendarConnected] = useState(null)
-  const [calendarEvents, setCalendarEvents] = useState([])
-  const [calendarNotice, setCalendarNotice] = useState('')
   const [loading, setLoading] = useState(true)
-  const searchParams = useSearchParams()
 
   const dateLabel = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -85,16 +80,6 @@ export default function DailyTaskPage() {
         setReflection({ reflectionQuestion: t.spiritual_reflection_question, loveReminder: t.daily_love_reminder, reference: t.daily_love_reference })
       } else {
         generateReflection(uid)
-      }
-
-      loadCalendar(uid)
-
-      if (searchParams.get('calendar') === 'connected') {
-        setCalendarNotice('Google Calendar connected!')
-        window.history.replaceState({}, '', '/')
-      } else if (searchParams.get('calendar') === 'error') {
-        setCalendarNotice('Could not connect Google Calendar — try again.')
-        window.history.replaceState({}, '', '/')
       }
 
       setLoading(false)
@@ -231,22 +216,6 @@ export default function DailyTaskPage() {
       setJournalFeedback('Could not generate feedback right now — your entry is still saved.')
     } finally {
       setJournalLoading(false)
-    }
-  }
-
-  async function loadCalendar(uid) {
-    try {
-      const res = await fetch('/api/calendar/today', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid }),
-      })
-      const data = await res.json()
-      setCalendarConnected(!!data.connected)
-      setCalendarEvents(data.events || [])
-    } catch (err) {
-      setCalendarConnected(false)
-      setCalendarEvents([])
     }
   }
 
@@ -440,37 +409,6 @@ export default function DailyTaskPage() {
         </button>
         {journalFeedback && (
           <p className="mt-3 rounded-card bg-sage-light px-3 py-2 text-sm text-sage-dark">{journalFeedback}</p>
-        )}
-      </Card>
-
-      <Card className="mt-4">
-        <SectionLabel>Today&rsquo;s calendar</SectionLabel>
-        {calendarNotice && <p className="mb-2 text-xs font-semibold text-sage-dark">{calendarNotice}</p>}
-        {calendarConnected === false && (
-          <>
-            <p className="mb-2 text-sm text-ink/40">Not connected yet.</p>
-            <a
-              href={`/api/auth/google/connect?uid=${userId}`}
-              className="inline-block rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper"
-            >
-              Connect Google Calendar
-            </a>
-          </>
-        )}
-        {calendarConnected === true && calendarEvents.length === 0 && (
-          <p className="text-sm text-ink/40">Nothing on your calendar today.</p>
-        )}
-        {calendarConnected === true && calendarEvents.length > 0 && (
-          <ul className="divide-y divide-sage-light">
-            {calendarEvents.map((e) => (
-              <li key={e.id} className="flex items-center justify-between py-2 text-sm">
-                <span>{e.title}</span>
-                <span className="text-xs text-ink/40">
-                  {e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                </span>
-              </li>
-            ))}
-          </ul>
         )}
       </Card>
 
