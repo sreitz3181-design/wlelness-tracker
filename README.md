@@ -78,6 +78,26 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
     - Sends come from Resend's shared `onboarding@resend.dev` address, which works immediately with no domain setup — verify a custom domain in Resend later if you want the "from" address to look more polished.
 34. **Run `supabase/migration_8_grocery_list.sql`** — adds the `grocery_items` table.
 35. **New: Grocery List screen** (`/grocery-list`), reached from the Weekly Planner once a shopping list exists. Items from "Generate shopping list" are automatically sorted into Produce / Bakery / Meat / Grocery / Frozen / Dairy / Personal Hygiene / Household (plus an Other bucket, hidden when empty) via `/api/categorize-groceries`. Checking an item off removes it from view immediately rather than just marking it done — a single **Undo last check-off** button reverses the most recent one if you tap the wrong item, holding up to the last 10. Each category has its own "Add to [category]" input for anything not on a recipe (paper towels, toothpaste, etc.) — those manual additions are never touched when you regenerate the list from a new week's plan; only the previously auto-generated items get replaced. Built mobile-first: full-width tap targets, one column, no dense table layout.
+36. **Run `supabase/migration_9_google_calendar.sql`** — adds `google_calendar_connections`.
+37. **Google Calendar is live on the Today screen** — a "Today's calendar" card shows your day's events once connected, or a "Connect Google Calendar" button if not. This is a real OAuth2 integration, not a demo — it needs real setup in Google Cloud Console before it works:
+
+    **One-time Google Cloud setup:**
+    1. Go to console.cloud.google.com, create a new project (or use an existing one)
+    2. APIs & Services → Library → search "Google Calendar API" → Enable
+    3. APIs & Services → OAuth consent screen → User Type: **External** → fill in the required app name/email fields → add your own email as a **Test user**
+    4. **Publishing status: leave it as "In production," not "Testing."** This matters — in Testing mode, refresh tokens silently expire after 7 days, which would quietly break the calendar connection every week. Moving to "In production" without going through Google's full verification process is fine for personal use; it just means anyone who tries to sign in (only you, realistically) sees an "unverified app" warning screen, which you click through once during connection.
+    5. APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: **Web application**
+    6. Under "Authorized redirect URIs," add exactly: `https://your-vercel-url.vercel.app/api/auth/google/callback` (use your real deployed URL)
+    7. Copy the generated **Client ID** and **Client Secret**
+
+    **Env vars to add in Vercel:**
+    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — from the credentials you just created
+    - `SUPABASE_SERVICE_ROLE_KEY` — Supabase dashboard → Project Settings → API → "service_role" key (⚠️ this key bypasses row-level security entirely — it's only ever used server-side in the OAuth callback and calendar-fetch routes, never exposed to the browser, but treat it as sensitive as a database password)
+    - Redeploy after adding these
+
+    **Why it's built this way:** the Google OAuth callback is a plain browser redirect with no Supabase login session attached to it, so there's no normal way to prove which of your accounts is connecting. The `state` parameter carries your user id through the OAuth flow, and the service-role key lets the callback write the resulting token under that id without needing an authenticated session at that exact moment. That's a reasonable simplification for a single-user personal app — a multi-user version of this would need a more careful state-signing scheme to stop someone from forging a `state` value and attaching their calendar to your account.
+
+    Once connected, only today's events show, read-only — nothing is ever written to your calendar.
 7. **Email reminders** — pick a transactional email provider (Resend is the simplest to pair with Next.js) and a cron mechanism (Vercel Cron) for the four scheduled check-ins: 8:30 AM, 8:00 PM, Friday 5:00 PM, Sunday 1:00 PM.
 8. **Google Health API** (steps/active minutes/calories, once you're ready) — not Google Fit, which stopped accepting new integrations in 2024 and is being retired. `health.googleapis.com` is the live successor; same OAuth2 pattern as the Google Calendar integration in you.accomplished.
 9. **AI coaching** — scripture selection, stress advice, and sermon-theme reflections still come from `lib/mockData.js` placeholders. Wiring these to the Anthropic API is the same call pattern as you.accomplished's coaching pipeline.
