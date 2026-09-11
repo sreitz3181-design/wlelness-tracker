@@ -13,6 +13,7 @@ import {
   isRestricted,
   stepLevel,
 } from '../../lib/dailyLog'
+import { authedFetch } from '../../lib/apiFetch'
 
 const DEFAULT_GOALS = { steps: 11000, activeMinutes: 90, caloriesBurned: 1000 }
 const RATINGS = [
@@ -97,7 +98,7 @@ export default function WorkoutPage() {
     setGenError('')
     try {
       const level = isRestricted(settings) ? 'light' : settings.strength_intensity
-      const res = await fetch('/api/generate-workout', {
+      const res = await authedFetch('/api/generate-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ intensityLevel: level }),

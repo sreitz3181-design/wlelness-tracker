@@ -6,6 +6,7 @@ import { Card, SectionLabel, RatingScale } from '../components/ui'
 import { supabase } from '../lib/supabaseClient'
 import { todayISO, mondayOfWeekISO } from '../lib/dates'
 import { referenceForDate } from '../lib/scriptureReferences'
+import { authedFetch } from '../lib/apiFetch'
 
 const PRIORITIES = ['Critical', 'Moderate', 'Low']
 const PRIORITY_ORDER = { Critical: 0, Moderate: 1, Low: 2 }
@@ -124,7 +125,7 @@ export default function DailyTaskPage() {
   async function getStressReflection() {
     setStressReflectionLoading(true)
     try {
-      const res = await fetch('/api/stress-reflection', {
+      const res = await authedFetch('/api/stress-reflection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -195,7 +196,7 @@ export default function DailyTaskPage() {
         .gte('log_date', since.toISOString().slice(0, 10))
         .order('log_date', { ascending: false })
 
-      const res = await fetch('/api/journal-feedback', {
+      const res = await authedFetch('/api/journal-feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -230,7 +231,7 @@ export default function DailyTaskPage() {
         .maybeSingle()
 
       const { ref, theme } = referenceForDate()
-      const res = await fetch('/api/daily-reflection', {
+      const res = await authedFetch('/api/daily-reflection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sermonNotes: sermon?.raw_notes || '', reference: ref, theme }),

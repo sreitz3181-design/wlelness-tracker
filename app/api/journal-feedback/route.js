@@ -1,7 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { requireUser } from '../../../lib/verifyAuth'
 
 export async function POST(request) {
+  const user = await requireUser(request)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { stressRating, stressCause, stressHelped, mentalHealthHelpers, additionalShare, recentHistory, tasks } =
     await request.json()
 

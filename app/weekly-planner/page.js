@@ -8,6 +8,7 @@ import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
 import { CATEGORY_SLOT_LIMITS, MEDICATION_TIMES, emptySlot } from '../../lib/mealLibrary'
+import { authedFetch } from '../../lib/apiFetch'
 
 function recipeIngredients(recipe, slot) {
   if (!recipe) return []
@@ -219,7 +220,7 @@ export default function WeeklyPlannerPage() {
     // this week's previously *generated* items — anything added manually
     // there is left untouched.
     try {
-      const res = await fetch('/api/categorize-groceries', {
+      const res = await authedFetch('/api/categorize-groceries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: deduped }),

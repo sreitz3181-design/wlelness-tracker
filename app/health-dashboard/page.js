@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId, getLatestWeight, defaultWorkoutType } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
+import { authedFetch } from '../../lib/apiFetch'
 
 function isoDaysAgo(n) {
   const d = new Date()
@@ -126,7 +127,7 @@ export default function HealthDashboardPage() {
         openTasksCount: openTasks?.length || 0,
       }
 
-      const res = await fetch('/api/weekly-review', {
+      const res = await authedFetch('/api/weekly-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stats }),

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { requireUser } from '../../../lib/verifyAuth'
 
 // Safe, conservative rep/set/load bands per intensity level. The model
 // picks exercises and stays within these bands rather than inventing its
@@ -12,6 +13,9 @@ const INTENSITY_GUIDANCE = {
 }
 
 export async function POST(request) {
+  const user = await requireUser(request)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { intensityLevel } = await request.json()
 
   if (!INTENSITY_GUIDANCE[intensityLevel]) {

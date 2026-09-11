@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { requireUser } from '../../../lib/verifyAuth'
 
 const CATEGORY_GUIDANCE = {
   Breakfast: 'Breakfast-style meals — quick to prepare, roughly 350-550 calories per serving.',
@@ -9,6 +10,9 @@ const CATEGORY_GUIDANCE = {
 }
 
 export async function POST(request) {
+  const user = await requireUser(request)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { existingRecipeNames, category } = await request.json()
   const cat = CATEGORY_GUIDANCE[category] ? category : 'Dinner'
 

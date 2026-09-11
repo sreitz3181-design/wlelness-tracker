@@ -1,8 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { LOVE_REFERENCES } from '../../../lib/scriptureReferences'
+import { requireUser } from '../../../lib/verifyAuth'
 
 export async function POST(request) {
+  const user = await requireUser(request)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { stressCause, stressHelped, mentalHealthHelpers, additionalShare, stressRating } = await request.json()
 
   if (!process.env.ANTHROPIC_API_KEY) {

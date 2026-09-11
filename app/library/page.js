@@ -6,6 +6,7 @@ import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { MEAL_CATEGORIES } from '../../lib/mealLibrary'
+import { authedFetch } from '../../lib/apiFetch'
 
 export default function MealLibraryPage() {
   const [userId, setUserId] = useState(null)
@@ -38,7 +39,7 @@ export default function MealLibraryPage() {
     setSuggestError('')
     setSuggestions([])
     try {
-      const res = await fetch('/api/suggest-meals', {
+      const res = await authedFetch('/api/suggest-meals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -96,7 +97,7 @@ export default function MealLibraryPage() {
   async function estimateNutrition(recipe) {
     setEstimatingId(recipe.id)
     try {
-      const res = await fetch('/api/estimate-nutrition', {
+      const res = await authedFetch('/api/estimate-nutrition', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: recipe.name, ingredients: recipe.ingredients }),

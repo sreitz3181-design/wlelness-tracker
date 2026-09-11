@@ -1,9 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { requireUser } from '../../../lib/verifyAuth'
 
 const CATEGORIES = ['Produce', 'Bakery', 'Meat', 'Grocery', 'Frozen', 'Dairy', 'Personal Hygiene', 'Household', 'Other']
 
 export async function POST(request) {
+  const user = await requireUser(request)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { items } = await request.json()
 
   if (!process.env.ANTHROPIC_API_KEY) {
