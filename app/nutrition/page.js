@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, SectionLabel } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
-import { todayISO, mondayOfWeekISO, mondayBasedDayIndex } from '../../lib/dates'
+import { todayISO, mondayOfWeekISO } from '../../lib/dates'
 import { getCurrentUserId, saveTodayFields, getLatestWeight } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
 import { MEDICATION_TIMES } from '../../lib/mealLibrary'
@@ -19,9 +19,9 @@ const MEALS = [
 export default function NutritionPage() {
   const [userId, setUserId] = useState(null)
   const [recipes, setRecipes] = useState([])
+  const [dinnerSlots, setDinnerSlots] = useState([])
   const [selections, setSelections] = useState({})
   const [nutritionActual, setNutritionActual] = useState({})
-  const [defaultedFrom, setDefaultedFrom] = useState({})
   const [water, setWater] = useState('')
   const [weight, setWeight] = useState(null)
   const [medications, setMedications] = useState([])
@@ -39,52 +39,15 @@ export default function NutritionPage() {
         supabase.from('recipes').select('*').eq('user_id', uid),
         supabase.from('medications').select('*').eq('user_id', uid).eq('active', true).order('created_at', { ascending: true }),
         supabase.from('medication_logs').select('medication_id, taken').eq('user_id', uid).eq('log_date', todayISO()),
-        supabase.from('weekly_plans').select('*').eq('user_id', uid).eq('week_start', mondayOfWeekISO()).maybeSingle(),
+        supabase.from('weekly_plans').select('dinner_slots').eq('user_id', uid).eq('week_start', mondayOfWeekISO()).maybeSingle(),
       ])
-      const existingSelections = data?.nutrition_selections || {}
-      const existingActual = data?.nutrition_actual || {}
-      const allRecipes = recipeRows || []
 
-      // Default any not-yet-chosen meal to whatever the Weekly Planner has
-      // slotted for today's day of the week — never overrides a selection
-      // already made today.
-      const todayIdx = mondayBasedDayIndex()
-      const slotsByKey = {
-        breakfast: plan?.breakfast_slots || [],
-        lunch: plan?.lunch_slots || [],
-        dinner: plan?.dinner_slots || [],
-        snacks: plan?.snack_slots || [],
-      }
-      const nextSelections = { ...existingSelections }
-      const nextActual = { ...existingActual }
-      const defaulted = {}
-      let appliedDefault = false
-
-      MEALS.forEach((m) => {
-        if (nextSelections[m.key]) return
-        const todaysSlot = slotsByKey[m.key].find((s) => s.day === todayIdx)
-        if (!todaysSlot) return
-        const recipeId =
-          m.key === 'lunch' && todaysSlot.type === 'leftover'
-            ? slotsByKey.dinner[todaysSlot.dinnerIndex]?.recipeId
-            : todaysSlot.recipeId
-        if (!recipeId) return
-        nextSelections[m.key] = recipeId
-        const recipe = allRecipes.find((r) => r.id === recipeId)
-        nextActual[m.key] = recipe?.calories ?? null
-        defaulted[m.key] = true
-        appliedDefault = true
-      })
-
-      setWater(nextActual.water_oz ?? '')
-      setNutritionActual(nextActual)
-      setSelections(nextSelections)
-      setDefaultedFrom(defaulted)
+      setWater(data?.nutrition_actual?.water_oz ?? '')
+      setNutritionActual(data?.nutrition_actual || {})
+      setSelections(data?.nutrition_selections || {})
       setWeight(latestWeight)
-      setRecipes(allRecipes)
-      if (appliedDefault) {
-        await saveTodayFields(uid, { nutrition_selections: nextSelections, nutrition_actual: nextActual })
-      }
+      setRecipes(recipeRows || [])
+      setDinnerSlots(plan?.dinner_slots || [])
 
       setMedications(meds || [])
       const takenMap = {}
@@ -100,7 +63,6 @@ export default function NutritionPage() {
   async function selectMeal(key, recipeId) {
     const nextSelections = { ...selections, [key]: recipeId }
     setSelections(nextSelections)
-    setDefaultedFrom((prev) => ({ ...prev, [key]: false }))
     const recipe = recipes.find((r) => r.id === recipeId)
     const nextActual = { ...nutritionActual, [key]: recipe?.calories ?? null }
     setNutritionActual(nextActual)
@@ -146,29 +108,72 @@ export default function NutritionPage() {
         )}
         <div className="space-y-4">
           {MEALS.map((m) => {
-            const categoryRecipes = recipes.filter((r) => (r.category || 'Dinner') === m.category)
-            const selected = recipes.find((r) => r.id === selections[m.key])
+            const libraryRecipes = recipes.filter((r) => (r.category || 'Dinner') === m.category)
+            const plannedDinners = dinnerSlots
+              .filter((s) => s.recipeId)
+              .map((s) => recipes.find((r) => r.id === s.recipeId))
+              .filter(Boolean)
+            // Dinner draws from this week's actual 7 planned meals — what
+            // you have ingredients for — falling back to the full Library
+            // only if nothing's been planned yet.
+            const dinnerOptions = plannedDinners.length > 0 ? plannedDinners : libraryRecipes
+            const categoryRecipes = m.key === 'dinner' ? dinnerOptions : libraryRecipes
+
+            const selectedRecipeId = selections[m.key]
+            const selected = recipes.find((r) => r.id === selectedRecipeId)
+            // If the current lunch selection matches one of this week's
+            // dinners, show it as the leftover option rather than a plain
+            // recipe id (which wouldn't otherwise appear in Lunch's list).
+            const leftoverIndex =
+              m.key === 'lunch' ? dinnerSlots.findIndex((s) => s.recipeId === selectedRecipeId) : -1
+            const selectValue = leftoverIndex >= 0 ? `leftover:${leftoverIndex}` : selectedRecipeId || ''
+
             const target = calorieTargets?.meals[m.key]
             const diff = selected?.calories != null && target != null ? selected.calories - target : null
+
             return (
               <div key={m.key}>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-ink/70">
-                    {m.label}
-                    {defaultedFrom[m.key] && <span className="ml-1.5 text-[10px] font-semibold text-sage-dark">from plan</span>}
-                  </span>
+                  <span className="text-sm text-ink/70">{m.label}</span>
                   <select
-                    value={selections[m.key] || ''}
-                    onChange={(e) => selectMeal(m.key, e.target.value)}
+                    value={selectValue}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      if (val.startsWith('leftover:')) {
+                        const idx = Number(val.split(':')[1])
+                        selectMeal(m.key, dinnerSlots[idx]?.recipeId || '')
+                      } else {
+                        selectMeal(m.key, val)
+                      }
+                    }}
                     className="w-52 rounded-card border border-sage-light bg-white/70 px-2 py-1.5 text-sm"
                   >
                     <option value="">Choose a meal…</option>
                     {categoryRecipes.map((r) => (
                       <option key={r.id} value={r.id}>{r.name}</option>
                     ))}
+                    {m.key === 'lunch' && plannedDinners.length > 0 && (
+                      <optgroup label="Leftovers">
+                        {dinnerSlots.map((s, i) => {
+                          const dRecipe = recipes.find((r) => r.id === s.recipeId)
+                          if (!dRecipe) return null
+                          return (
+                            <option key={i} value={`leftover:${i}`}>
+                              Leftover: {dRecipe.name}
+                            </option>
+                          )
+                        })}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
-                {categoryRecipes.length === 0 && (
+                {m.key === 'dinner' && plannedDinners.length === 0 && libraryRecipes.length === 0 && (
+                  <p className="mt-1 text-right text-xs text-ink/40">
+                    No dinners planned or in your library yet —{' '}
+                    <Link href="/weekly-planner" className="font-semibold text-dusk">plan your week</Link>
+                  </p>
+                )}
+                {m.key !== 'dinner' && categoryRecipes.length === 0 && (
                   <p className="mt-1 text-right text-xs text-ink/40">
                     No {m.category.toLowerCase()} meals in your library yet —{' '}
                     <Link href="/library" className="font-semibold text-dusk">add some</Link>

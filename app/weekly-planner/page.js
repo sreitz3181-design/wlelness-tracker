@@ -7,7 +7,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { mondayOfWeekISO, todayISO } from '../../lib/dates'
 import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
-import { CATEGORY_SLOT_LIMITS, DAY_NAMES, MEDICATION_TIMES, emptySlot } from '../../lib/mealLibrary'
+import { CATEGORY_SLOT_LIMITS, MEDICATION_TIMES, emptySlot } from '../../lib/mealLibrary'
 
 function recipeIngredients(recipe, slot) {
   if (!recipe) return []
@@ -17,7 +17,7 @@ function recipeIngredients(recipe, slot) {
 export default function WeeklyPlannerPage() {
   const [userId, setUserId] = useState(null)
   const [recipes, setRecipes] = useState([])
-  const [dinnerSlots, setDinnerSlots] = useState(Array.from({ length: 7 }, (_, i) => emptySlot(i)))
+  const [dinnerSlots, setDinnerSlots] = useState(Array.from({ length: 7 }, () => emptySlot()))
   const [breakfastSlots, setBreakfastSlots] = useState([])
   const [lunchSlots, setLunchSlots] = useState([])
   const [snackSlots, setSnackSlots] = useState([])
@@ -26,6 +26,7 @@ export default function WeeklyPlannerPage() {
   const [weight, setWeight] = useState('')
   const [latestWeighIn, setLatestWeighIn] = useState(null)
   const [savedNote, setSavedNote] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [medications, setMedications] = useState([])
   const [newMed, setNewMed] = useState({ name: '', dose: '', time_of_day: 'Morning' })
   const [editingMedId, setEditingMedId] = useState(null)
@@ -161,10 +162,6 @@ export default function WeeklyPlannerPage() {
     setLunchSlots((prev) => prev.map((s, i) => (i === index ? { type: 'leftover', dinnerIndex, day: s.day } : s)))
   }
 
-  function setSlotDay(category, index, day) {
-    settersByCategory[category]((prev) => prev.map((s, i) => (i === index ? { ...s, day } : s)))
-  }
-
   function updateSubstitution(category, index, ingredientIndex, value) {
     settersByCategory[category]((prev) =>
       prev.map((s, i) => {
@@ -189,6 +186,7 @@ export default function WeeklyPlannerPage() {
   }
 
   async function generateShoppingList() {
+    setGenerating(true)
     const collect = (slots, category) =>
       slots.flatMap((slot) => {
         if (category === 'Lunch' && slot.type === 'leftover') return [] // no new ingredients
@@ -216,6 +214,35 @@ export default function WeeklyPlannerPage() {
       },
       { onConflict: 'user_id,week_start' }
     )
+
+    // Categorize and push into the Grocery List screen. Replaces only
+    // this week's previously *generated* items — anything added manually
+    // there is left untouched.
+    try {
+      const res = await fetch('/api/categorize-groceries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: deduped }),
+      })
+      const data = await res.json()
+      if (!data.error && data.categorized?.length) {
+        await supabase.from('grocery_items').delete().eq('user_id', userId).eq('week_start', weekStart).eq('source', 'generated')
+        await supabase.from('grocery_items').insert(
+          data.categorized.map((c) => ({
+            user_id: userId,
+            week_start: weekStart,
+            category: c.category,
+            name: c.name,
+            source: 'generated',
+          }))
+        )
+      }
+    } catch (err) {
+      // Grocery List categorization is a nice-to-have on top of the plain
+      // shopping list below — a failure here shouldn't block the save.
+    }
+
+    setGenerating(false)
     setSavedNote(true)
     setTimeout(() => setSavedNote(false), 2500)
   }
@@ -230,20 +257,7 @@ export default function WeeklyPlannerPage() {
     return (
       <div key={index} className="rounded-card border border-sage-light bg-white/70 p-3">
         <div className="mb-2 flex items-center justify-between">
-          {category === 'Dinner' ? (
-            <span className="text-xs font-semibold text-ink/60">{DAY_NAMES[slot.day]}</span>
-          ) : (
-            <select
-              value={slot.day ?? ''}
-              onChange={(e) => setSlotDay(category, index, e.target.value === '' ? null : Number(e.target.value))}
-              className="rounded-card border border-sage-light bg-white/70 px-2 py-1 text-xs"
-            >
-              <option value="">Any day</option>
-              {DAY_NAMES.map((name, i) => (
-                <option key={name} value={i}>{name}</option>
-              ))}
-            </select>
-          )}
+          <span className="text-xs font-semibold text-ink/60">Meal {index + 1}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
           <select
@@ -274,7 +288,7 @@ export default function WeeklyPlannerPage() {
                   if (!dRecipe) return null
                   return (
                     <option key={di} value={`leftover:${di}`}>
-                      Leftover: {dRecipe.name} ({DAY_NAMES[d.day]})
+                      Leftover: {dRecipe.name} (Meal {di + 1})
                     </option>
                   )
                 })}
@@ -354,24 +368,18 @@ export default function WeeklyPlannerPage() {
       <div className="mt-4 flex items-center gap-2">
         <button
           onClick={generateShoppingList}
-          className="flex-1 rounded-card bg-sage py-2.5 text-sm font-semibold text-paper"
+          disabled={generating}
+          className="flex-1 rounded-card bg-sage py-2.5 text-sm font-semibold text-paper disabled:opacity-50"
         >
-          Generate shopping list
+          {generating ? 'Building list…' : 'Generate shopping list'}
         </button>
         {savedNote && <span className="text-xs text-sage-dark">Saved ✓</span>}
       </div>
 
       {shoppingList.length > 0 && (
-        <Card className="mt-4">
-          <SectionLabel>Shopping list</SectionLabel>
-          <ul className="grid grid-cols-2 gap-x-4 text-sm text-ink/80">
-            {shoppingList.map((item, i) => (
-              <li key={`${item}-${i}`} className="py-0.5">
-                • {item}
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <Link href="/grocery-list" className="mt-4 block rounded-card bg-amber py-2.5 text-center text-sm font-semibold text-paper">
+          View Grocery List ({shoppingList.length} items)
+        </Link>
       )}
 
       <Link href="/library" className="mt-4 block rounded-card bg-dusk py-2.5 text-center text-sm font-semibold text-paper">
