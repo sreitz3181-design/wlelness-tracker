@@ -145,35 +145,55 @@ export default function WeeklyPlannerPage() {
 
   const settersByCategory = { Dinner: setDinnerSlots, Breakfast: setBreakfastSlots, Lunch: setLunchSlots, Snacks: setSnackSlots }
   const slotsByCategory = { Dinner: dinnerSlots, Breakfast: breakfastSlots, Lunch: lunchSlots, Snacks: snackSlots }
+  const columnByCategory = { Dinner: 'dinner_slots', Breakfast: 'breakfast_slots', Lunch: 'lunch_slots', Snacks: 'snack_slots' }
+
+  // Persists one category's slots immediately — every other part of this
+  // app auto-saves the instant you make a choice, and meal selection
+  // should behave the same way rather than waiting for a separate action.
+  async function persistSlots(category, nextSlots) {
+    if (!userId) return
+    await supabase.from('weekly_plans').upsert(
+      { user_id: userId, week_start: weekStart, [columnByCategory[category]]: nextSlots },
+      { onConflict: 'user_id,week_start' }
+    )
+  }
 
   function addSlot(category) {
-    const setter = settersByCategory[category]
-    setter((prev) => (prev.length >= CATEGORY_SLOT_LIMITS[category] ? prev : [...prev, emptySlot()]))
+    if (slotsByCategory[category].length >= CATEGORY_SLOT_LIMITS[category]) return
+    const next = [...slotsByCategory[category], emptySlot()]
+    settersByCategory[category](next)
+    persistSlots(category, next)
   }
 
   function removeSlot(category, index) {
-    settersByCategory[category]((prev) => prev.filter((_, i) => i !== index))
+    const next = slotsByCategory[category].filter((_, i) => i !== index)
+    settersByCategory[category](next)
+    persistSlots(category, next)
   }
 
   function selectRecipe(category, index, recipeId) {
-    settersByCategory[category]((prev) => prev.map((s, i) => (i === index ? { recipeId, ingredients: null, day: s.day } : s)))
+    const next = slotsByCategory[category].map((s, i) => (i === index ? { recipeId, ingredients: null, day: s.day } : s))
+    settersByCategory[category](next)
+    persistSlots(category, next)
   }
 
   function selectLeftover(index, dinnerIndex) {
-    setLunchSlots((prev) => prev.map((s, i) => (i === index ? { type: 'leftover', dinnerIndex, day: s.day } : s)))
+    const next = lunchSlots.map((s, i) => (i === index ? { type: 'leftover', dinnerIndex, day: s.day } : s))
+    setLunchSlots(next)
+    persistSlots('Lunch', next)
   }
 
   function updateSubstitution(category, index, ingredientIndex, value) {
-    settersByCategory[category]((prev) =>
-      prev.map((s, i) => {
-        if (i !== index) return s
-        const recipe = recipes.find((r) => r.id === s.recipeId)
-        const base = s.ingredients || recipe?.ingredients || []
-        const next = [...base]
-        next[ingredientIndex] = value
-        return { ...s, ingredients: next }
-      })
-    )
+    const next = slotsByCategory[category].map((s, i) => {
+      if (i !== index) return s
+      const recipe = recipes.find((r) => r.id === s.recipeId)
+      const base = s.ingredients || recipe?.ingredients || []
+      const updated = [...base]
+      updated[ingredientIndex] = value
+      return { ...s, ingredients: updated }
+    })
+    settersByCategory[category](next)
+    persistSlots(category, next)
   }
 
   async function saveIngredientToLibrary(category, index, ingredientIndex) {
