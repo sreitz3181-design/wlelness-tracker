@@ -3,9 +3,11 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, SectionLabel } from '../../components/ui'
+import DateNav from '../../components/DateNav'
 import { supabase } from '../../lib/supabaseClient'
 import { todayISO, mondayOfWeekISO } from '../../lib/dates'
-import { getCurrentUserId, saveTodayFields, getLatestWeight } from '../../lib/dailyLog'
+import { useLogDate } from '../../lib/useLogDate'
+import { getCurrentUserId, saveDayFields, getLatestWeight } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
 import { MEDICATION_TIMES } from '../../lib/mealLibrary'
 
@@ -17,6 +19,7 @@ const MEALS = [
 ]
 
 export default function NutritionPage() {
+  const [date, setDate] = useLogDate() // the day being viewed; null until mounted
   const [userId, setUserId] = useState(null)
   const [recipes, setRecipes] = useState([])
   const [dinnerSlots, setDinnerSlots] = useState([])
@@ -29,18 +32,24 @@ export default function NutritionPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!date) return
+    let cancelled = false
+
     async function load() {
+      setLoading(true)
       const uid = await getCurrentUserId()
       setUserId(uid)
-      if (!uid) return
+      if (!uid || cancelled) return
       const [{ data }, latestWeight, { data: recipeRows }, { data: meds }, { data: logs }, { data: plan }] = await Promise.all([
-        supabase.from('daily_logs').select('nutrition_actual, nutrition_selections').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
+        supabase.from('daily_logs').select('nutrition_actual, nutrition_selections').eq('user_id', uid).eq('log_date', date).maybeSingle(),
         getLatestWeight(uid),
         supabase.from('recipes').select('*').eq('user_id', uid),
         supabase.from('medications').select('*').eq('user_id', uid).eq('active', true).order('created_at', { ascending: true }),
-        supabase.from('medication_logs').select('medication_id, taken').eq('user_id', uid).eq('log_date', todayISO()),
-        supabase.from('weekly_plans').select('dinner_slots').eq('user_id', uid).eq('week_start', mondayOfWeekISO()).maybeSingle(),
+        supabase.from('medication_logs').select('medication_id, taken').eq('user_id', uid).eq('log_date', date),
+        // The plan for the week the viewed day falls in.
+        supabase.from('weekly_plans').select('dinner_slots').eq('user_id', uid).eq('week_start', mondayOfWeekISO(date)).maybeSingle(),
       ])
+      if (cancelled) return
 
       setWater(data?.nutrition_actual?.water_oz ?? '')
       setNutritionActual(data?.nutrition_actual || {})
@@ -58,7 +67,10 @@ export default function NutritionPage() {
       setLoading(false)
     }
     load()
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [date])
 
   async function selectMeal(key, recipeId) {
     const nextSelections = { ...selections, [key]: recipeId }
@@ -66,14 +78,14 @@ export default function NutritionPage() {
     const recipe = recipes.find((r) => r.id === recipeId)
     const nextActual = { ...nutritionActual, [key]: recipe?.calories ?? null }
     setNutritionActual(nextActual)
-    await saveTodayFields(userId, { nutrition_selections: nextSelections, nutrition_actual: nextActual })
+    await saveDayFields(userId, { nutrition_selections: nextSelections, nutrition_actual: nextActual }, date)
   }
 
   async function saveWater(value) {
     setWater(value)
     const nextActual = { ...nutritionActual, water_oz: value === '' ? null : Number(value) }
     setNutritionActual(nextActual)
-    await saveTodayFields(userId, { nutrition_actual: nextActual })
+    await saveDayFields(userId, { nutrition_actual: nextActual }, date)
   }
 
   async function toggleTaken(medId) {
@@ -81,10 +93,20 @@ export default function NutritionPage() {
     setTakenToday((prev) => ({ ...prev, [medId]: next }))
     await supabase
       .from('medication_logs')
-      .upsert({ user_id: userId, medication_id: medId, log_date: todayISO(), taken: next }, { onConflict: 'user_id,medication_id,log_date' })
+      .upsert({ user_id: userId, medication_id: medId, log_date: date, taken: next }, { onConflict: 'user_id,medication_id,log_date' })
   }
 
-  if (loading) return <main className="px-4 pt-8 text-sm text-ink/40">Loading nutrition…</main>
+  if (!date) return <main className="px-4 pt-8 text-sm text-ink/40">Loading…</main>
+  if (loading) {
+    return (
+      <main className="px-4 pt-8">
+        <DateNav date={date} onChange={setDate} />
+        <p className="mt-6 text-sm text-ink/40">Loading nutrition…</p>
+      </main>
+    )
+  }
+
+  const isToday = date === todayISO()
 
   const waterGoal = weight ? Math.round(weight * 0.5) : null
   const calorieTargets = computeCalorieTargets(weight)
@@ -96,11 +118,11 @@ export default function NutritionPage() {
 
   return (
     <main className="px-4 pt-8">
-      <p className="text-xs uppercase tracking-wide text-ink/40">Today</p>
-      <h1 className="font-display text-2xl">Daily Nutrition</h1>
+      <DateNav date={date} onChange={setDate} />
+      <h1 className="mt-3 font-display text-2xl">Daily Nutrition</h1>
 
       <Card className="mt-5">
-        <SectionLabel>Meals today</SectionLabel>
+        <SectionLabel>{isToday ? 'Meals today' : 'Meals'}</SectionLabel>
         {!calorieTargets && (
           <p className="mb-3 text-xs text-ink/40">
             No calorie targets yet — log a weigh-in on the Weekly Planner to see meals compared against a target. You can still pick your meals below.
@@ -226,7 +248,7 @@ export default function NutritionPage() {
       <Card className="mt-4">
         <SectionLabel>Medications &amp; supplements</SectionLabel>
         <p className="mb-3 text-xs text-ink/40">
-          Manage the list itself from the Weekly Planner. This is just today&rsquo;s check-off — not reviewed or commented on by the AI features elsewhere in the app.
+          Manage the list itself from the Weekly Planner. This is just {isToday ? 'today\u2019s' : 'this day\u2019s'} check-off — not reviewed or commented on by the AI features elsewhere in the app.
         </p>
         {medications.length === 0 ? (
           <p className="text-sm text-ink/40">

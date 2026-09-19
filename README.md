@@ -91,6 +91,11 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
     - **"Combine duplicates" button** on the Grocery List screen runs the same merge over the whole current list, including items added by hand. Merged lines that include anything added by hand stay marked as manual, so regenerating the plan's list can't wipe them out.
     - Regenerating the list now adds the new items before removing the old generated ones, so a failed update can't leave the list empty; if it fails, a message on the Weekly Planner says so.
 
+41. **Go back to previous days on Today, Workout, and Nutrition.** Each of those screens now has a date bar at the top: ‹ / › step one day, tapping the date opens a date picker, and a banner says "Viewing a past day — entries save to this date" with a Back to today button. Future days aren't allowed. The chosen day lives in the URL (`?date=2026-09-17`), and the Today screen's Workout and Nutrition buttons carry it along; the bottom nav always opens today. Everything on those screens loads and saves for the chosen day: sleep and stress, the mental health journal, the spiritual reflection, workout type/exercises/cardio/goals/rating, meals, water, and medication check-offs. (The Tasks list is not tied to a day.) No database changes.
+    - A past day's spiritual reflection is not generated automatically — there's a "Prepare a reflection for this day" button instead, so browsing back never spends an AI call you didn't ask for. Journal feedback looks at the 7 days ending on the viewed day.
+    - A "how was this workout?" rating steps the intensity level only for today or yesterday. Older ratings are recorded but don't change it, so catching up on a week of workouts can't step the level seven times.
+    - **Date bug fixed:** dates used to be built from the UTC date, so after about 7 PM Central the app thought it was already tomorrow (and the "Monday of this week" key came out as Tuesday), filing evening entries under the wrong day and evening plans under the wrong week. `lib/dates.js` now uses the local date everywhere.
+
 ## Structure
 
 ```
@@ -105,11 +110,12 @@ app/
   login/page.js            Single-user Supabase login
   api/                     Anthropic-backed routes (login required) and Vercel cron routes
 components/
-  AuthGate.js, NavBar.js, ui.js
+  AuthGate.js, DateNav.js, NavBar.js, ui.js
 lib/
   apiFetch.js, verifyAuth.js   Authenticated API calls / server-side session check
   supabaseClient.js            Supabase client
   calorieTargets.js, dailyLog.js, dates.js, email.js, groceryCombine.js, mealLibrary.js,
+  useLogDate.js,
   scriptureReferences.js, mockData.js
 supabase/
   schema.sql               Base schema + RLS policies
