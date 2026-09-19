@@ -2,7 +2,7 @@
 
 A personal physical/mental/spiritual health tracker — Next.js + Supabase + the Anthropic API, matching the six screens sketched in the rough wireframes (Weekly Planner, Daily Task, Strength/Cardio Workout, Nutrition, Health Dashboard).
 
-Every page currently renders from `lib/mockData.js` so you can see the real layout before wiring up a database. Nothing here talks to a live backend yet.
+All screens run on live Supabase data behind a single-user login (see the numbered notes below). `lib/mockData.js` is now only a fallback: the Weekly Planner uses its placeholder recipe list until the `recipes` table is seeded.
 
 ## Run it locally
 
@@ -78,7 +78,7 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
     - Sends come from Resend's shared `onboarding@resend.dev` address, which works immediately with no domain setup — verify a custom domain in Resend later if you want the "from" address to look more polished.
 34. **Run `supabase/migration_8_grocery_list.sql`** — adds the `grocery_items` table.
 35. **New: Grocery List screen** (`/grocery-list`), reached from the Weekly Planner once a shopping list exists. Items from "Generate shopping list" are automatically sorted into Produce / Bakery / Meat / Grocery / Frozen / Dairy / Personal Hygiene / Household (plus an Other bucket, hidden when empty) via `/api/categorize-groceries`. Checking an item off removes it from view immediately rather than just marking it done — a single **Undo last check-off** button reverses the most recent one if you tap the wrong item, holding up to the last 10. Each category has its own "Add to [category]" input for anything not on a recipe (paper towels, toothpaste, etc.) — those manual additions are never touched when you regenerate the list from a new week's plan; only the previously auto-generated items get replaced. Built mobile-first: full-width tap targets, one column, no dense table layout.
-36. **Run `supabase/migration_9_google_calendar.sql`** if you ran it previously — that table can be dropped now, since the Google Calendar integration was tried and then removed (didn't work reliably enough to justify the setup complexity). Optional cleanup: `drop table if exists google_calendar_connections;`
+36. **Google Calendar integration was tried and removed** (it didn't work reliably enough to justify the setup complexity). Its routes, helper files and `migration_9_google_calendar.sql` are deleted from the repo, and the `google_calendar_connections` table is dropped (`drop table if exists google_calendar_connections;`). Nothing else in the app needs a Google or service-role key.
 37. **All 8 Anthropic-backed API routes now require a real login.** `generate-workout`, `journal-feedback`, `daily-reflection`, `stress-reflection`, `suggest-meals`, `weekly-review`, `estimate-nutrition`, and `categorize-groceries` all check for a valid Supabase session (via `lib/verifyAuth.js`) before calling Anthropic, returning 401 otherwise. **Why this mattered:** these routes previously accepted any request with no check at all — anyone who discovered the endpoint URLs (trivial, since they're visible in the browser's network tab) could call them directly and run up your Anthropic bill without ever touching your login screen. Since this app has exactly one real account and no public sign-up path, "is there a genuine logged-in session at all" is a complete fix — no per-user logic needed. Every client-side call to these routes now goes through `lib/apiFetch.js`'s `authedFetch()`, which attaches the current session's token automatically.
 38. **Also recommended, done outside the codebase:** a monthly spend limit set directly in the Anthropic Console (platform.claude.com → Settings → Billing), with alerts at 50%/80%. This is a hard stop independent of any code — worth having regardless of anything above, since it protects against literally any runaway scenario (a bug, a future exploit, anything), not just this specific one.
 
@@ -86,17 +86,24 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
 
 ```
 app/
-  page.js                 Today (Daily Task) — scripture, yesterday's ratings, tasks
+  page.js                  Today — scripture, journal, tasks, spiritual reflection
   workout/page.js          Strength/Cardio, planned vs. actual, daily health goals
-  nutrition/page.js        Calories by meal + water, goal vs. actual
-  weekly-planner/page.js   7-meal picker → shopping list, calendar, sermon notes upload
-  health-dashboard/page.js Week/month toggle, averages across all five metrics
+  nutrition/page.js        Meals by category + water, medications check-off
+  weekly-planner/page.js   Meal slots → shopping list, sermon notes, weigh-ins, medications setup
+  library/page.js          Meal Library (recipes by category)
+  grocery-list/page.js     Categorized grocery list with undo
+  health-dashboard/page.js Week/month averages + weekly review
+  login/page.js            Single-user Supabase login
+  api/                     Anthropic-backed routes (login required) and Vercel cron routes
 components/
-  NavBar.js                Bottom tab nav (mobile-first)
-  ui.js                    Card, RatingScale, PlannedActualRow, StatPill
+  AuthGate.js, NavBar.js, ui.js
 lib/
-  mockData.js               Placeholder data — replace with Supabase queries
-  supabaseClient.js         Supabase client (needs env vars to do anything)
+  apiFetch.js, verifyAuth.js   Authenticated API calls / server-side session check
+  supabaseClient.js            Supabase client
+  calorieTargets.js, dailyLog.js, dates.js, email.js, mealLibrary.js,
+  scriptureReferences.js, mockData.js
 supabase/
-  schema.sql                Full schema + RLS policies
+  schema.sql               Base schema + RLS policies
+  migration_2 … migration_8 Run in order as described above
+  seed_recipes.sql         Starter recipes
 ```
