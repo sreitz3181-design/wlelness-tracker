@@ -82,6 +82,15 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
 37. **All 8 Anthropic-backed API routes now require a real login.** `generate-workout`, `journal-feedback`, `daily-reflection`, `stress-reflection`, `suggest-meals`, `weekly-review`, `estimate-nutrition`, and `categorize-groceries` all check for a valid Supabase session (via `lib/verifyAuth.js`) before calling Anthropic, returning 401 otherwise. **Why this mattered:** these routes previously accepted any request with no check at all — anyone who discovered the endpoint URLs (trivial, since they're visible in the browser's network tab) could call them directly and run up your Anthropic bill without ever touching your login screen. Since this app has exactly one real account and no public sign-up path, "is there a genuine logged-in session at all" is a complete fix — no per-user logic needed. Every client-side call to these routes now goes through `lib/apiFetch.js`'s `authedFetch()`, which attaches the current session's token automatically.
 38. **Also recommended, done outside the codebase:** a monthly spend limit set directly in the Anthropic Console (platform.claude.com → Settings → Billing), with alerts at 50%/80%. This is a hard stop independent of any code — worth having regardless of anything above, since it protects against literally any runaway scenario (a bug, a future exploit, anything), not just this specific one.
 
+39. **Run `supabase/migration_10_grocery_quantity.sql`** — adds `quantity` and `unit` columns to `grocery_items` (existing rows get quantity 1). Run it *before* deploying the matching code.
+40. **Grocery List: combined duplicates, quantities, and editing.**
+    - **Generating the list now combines items.** Each ingredient is read as quantity + unit + name (`lib/groceryCombine.js`), so "2 Chicken Breast" + "4 Chicken Breast" + "2 Chicken Breasts" becomes one "8 Chicken Breast" line. An ingredient with no number counts as 1 each time it appears (three recipes using Shredded Colby Jack Cheese give "3 Shredded Colby Jack Cheese"). Matching ignores case and plurals, and never adds different units together ("2 lb" and "3 cans" stay separate lines).
+    - **AI only matches names, code does the math.** `/api/categorize-groceries` now also returns groups of names that are the same thing to buy (e.g. "Carb Friendly Tortillas" and "Carb Friendly Tortillas (Large)"), and the quantities are still summed in code. It is told to leave different forms alone (fresh vs. frozen broccoli) and to skip anything it is unsure about.
+    - **Quantity on every item**, shown next to the name. Adding an item by hand understands a leading number and unit ("2 avocados", "1.5 lb ground turkey"); if it matches something already on the list, that line's quantity goes up instead of adding a duplicate.
+    - **Edit button on every item** — change name, quantity, unit, or category, or delete it.
+    - **"Combine duplicates" button** on the Grocery List screen runs the same merge over the whole current list, including items added by hand. Merged lines that include anything added by hand stay marked as manual, so regenerating the plan's list can't wipe them out.
+    - Regenerating the list now adds the new items before removing the old generated ones, so a failed update can't leave the list empty; if it fails, a message on the Weekly Planner says so.
+
 ## Structure
 
 ```
@@ -100,10 +109,10 @@ components/
 lib/
   apiFetch.js, verifyAuth.js   Authenticated API calls / server-side session check
   supabaseClient.js            Supabase client
-  calorieTargets.js, dailyLog.js, dates.js, email.js, mealLibrary.js,
+  calorieTargets.js, dailyLog.js, dates.js, email.js, groceryCombine.js, mealLibrary.js,
   scriptureReferences.js, mockData.js
 supabase/
   schema.sql               Base schema + RLS policies
-  migration_2 … migration_8 Run in order as described above
+  migration_2 … migration_10 Run in order as described above
   seed_recipes.sql         Starter recipes
 ```

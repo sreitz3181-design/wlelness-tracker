@@ -9,6 +9,7 @@ import { getCurrentUserId } from '../../lib/dailyLog'
 import { recipes as mockRecipes } from '../../lib/mockData'
 import { CATEGORY_SLOT_LIMITS, MEDICATION_TIMES, emptySlot } from '../../lib/mealLibrary'
 import { authedFetch } from '../../lib/apiFetch'
+import { parseIngredient, combineLines, normalizeKey, formatLine } from '../../lib/groceryCombine'
 
 function recipeIngredients(recipe, slot) {
   if (!recipe) return []
@@ -28,6 +29,7 @@ export default function WeeklyPlannerPage() {
   const [latestWeighIn, setLatestWeighIn] = useState(null)
   const [savedNote, setSavedNote] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [groceryError, setGroceryError] = useState('')
   const [medications, setMedications] = useState([])
   const [newMed, setNewMed] = useState({ name: '', dose: '', time_of_day: 'Morning' })
   const [editingMedId, setEditingMedId] = useState(null)
@@ -208,6 +210,7 @@ export default function WeeklyPlannerPage() {
 
   async function generateShoppingList() {
     setGenerating(true)
+    setGroceryError('')
     const collect = (slots, category) =>
       slots.flatMap((slot) => {
         if (category === 'Lunch' && slot.type === 'leftover') return [] // no new ingredients
@@ -221,8 +224,40 @@ export default function WeeklyPlannerPage() {
       ...collect(lunchSlots, 'Lunch'),
       ...collect(snackSlots, 'Snacks'),
     ]
-    const deduped = Array.from(new Set(all))
-    setShoppingList(deduped)
+
+    // Step 1 (deterministic): read each ingredient as {quantity, unit, name}
+    // and merge exact matches, summing quantities ("2 Chicken Breast" + "4
+    // Chicken Breast" -> 6). A line with no number counts as 1.
+    const lines = all.map(parseIngredient)
+    const exact = combineLines(lines)
+
+    // Step 2 (AI): categorize, and spot names that are the same thing to buy
+    // ("Chicken Breast" / "Chicken Breasts"). The AI only returns groups of
+    // names — the quantities are still added up here, in code.
+    const categoryByKey = {}
+    let groups = []
+    try {
+      const res = await authedFetch('/api/categorize-groceries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: exact.map((b) => b.name) }),
+      })
+      const data = await res.json()
+      if (!data.error) {
+        groups = data.merges || []
+        ;(data.categorized || []).forEach((c) => {
+          categoryByKey[normalizeKey(c.name)] = c.category
+        })
+      }
+    } catch (err) {
+      // Categorizing and fuzzy matching are extras on top of the exact
+      // merge above — if they fail, the list is still built, just with
+      // everything under Other.
+    }
+
+    const combined = combineLines(lines, groups)
+    const display = combined.map(formatLine)
+    setShoppingList(display)
     await supabase.from('weekly_plans').upsert(
       {
         user_id: userId,
@@ -231,36 +266,51 @@ export default function WeeklyPlannerPage() {
         breakfast_slots: breakfastSlots,
         lunch_slots: lunchSlots,
         snack_slots: snackSlots,
-        shopping_list: deduped,
+        shopping_list: display,
       },
       { onConflict: 'user_id,week_start' }
     )
 
-    // Categorize and push into the Grocery List screen. Replaces only
-    // this week's previously *generated* items — anything added manually
-    // there is left untouched.
-    try {
-      const res = await authedFetch('/api/categorize-groceries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: deduped }),
-      })
-      const data = await res.json()
-      if (!data.error && data.categorized?.length) {
-        await supabase.from('grocery_items').delete().eq('user_id', userId).eq('week_start', weekStart).eq('source', 'generated')
-        await supabase.from('grocery_items').insert(
-          data.categorized.map((c) => ({
-            user_id: userId,
-            week_start: weekStart,
-            category: c.category,
-            name: c.name,
-            source: 'generated',
-          }))
-        )
+    // Push into the Grocery List screen. Replaces only this week's
+    // previously *generated* items — anything added manually there is left
+    // untouched. New rows go in first and the old ones are removed after, so
+    // a failed insert can never leave the list empty.
+    if (combined.length > 0) {
+      const categoryFor = (bucket) => {
+        for (const n of [bucket.name, ...bucket.items.map((i) => i.name)]) {
+          const found = categoryByKey[normalizeKey(n)]
+          if (found) return found
+        }
+        return 'Other'
       }
-    } catch (err) {
-      // Grocery List categorization is a nice-to-have on top of the plain
-      // shopping list below — a failure here shouldn't block the save.
+
+      const { data: oldRows } = await supabase
+        .from('grocery_items')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('week_start', weekStart)
+        .eq('source', 'generated')
+
+      const { error: insertError } = await supabase.from('grocery_items').insert(
+        combined.map((b) => ({
+          user_id: userId,
+          week_start: weekStart,
+          category: categoryFor(b),
+          name: b.name,
+          quantity: b.quantity,
+          unit: b.unit,
+          source: 'generated',
+        }))
+      )
+
+      if (insertError) {
+        console.error('grocery_items insert error:', insertError)
+        setGroceryError(
+          "Couldn't update the Grocery List. If you just updated the app, make sure the latest Supabase migration (quantity and unit columns) has been run."
+        )
+      } else if (oldRows?.length) {
+        await supabase.from('grocery_items').delete().in('id', oldRows.map((r) => r.id))
+      }
     }
 
     setGenerating(false)
@@ -396,6 +446,7 @@ export default function WeeklyPlannerPage() {
         </button>
         {savedNote && <span className="text-xs text-sage-dark">Saved ✓</span>}
       </div>
+      {groceryError && <p className="mt-2 text-xs text-rose">{groceryError}</p>}
 
       {shoppingList.length > 0 && (
         <Link href="/grocery-list" className="mt-4 block rounded-card bg-amber py-2.5 text-center text-sm font-semibold text-paper">
