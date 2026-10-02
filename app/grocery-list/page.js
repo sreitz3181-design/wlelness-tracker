@@ -135,16 +135,16 @@ export default function GroceryListPage() {
                       </div>
                     </li>
                   ) : (
-                    <li key={item.id} className="py-3">
-                      <p className="text-sm text-ink">{item.name}</p>
-                      <div className="mt-2 flex gap-2">
-                        <button onClick={() => checkOff(item)} className="flex-1 rounded-card bg-sage py-1.5 text-xs font-semibold text-paper">
-                          Got it
-                        </button>
-                        <button onClick={() => startEdit(item)} className="flex-1 rounded-card bg-sage-light py-1.5 text-xs font-semibold text-sage-dark">
-                          Edit
-                        </button>
-                      </div>
+                    <li key={item.id} className="flex items-center gap-3 py-3">
+                      <button
+                        onClick={() => checkOff(item)}
+                        aria-label={`Check off ${item.name}`}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border-2 border-sage-light"
+                      />
+                      <span className="flex-1 text-sm text-ink">{item.name}</span>
+                      <button onClick={() => startEdit(item)} className="shrink-0 text-xs font-semibold text-dusk">
+                        Edit
+                      </button>
                     </li>
                   )
                 )}
