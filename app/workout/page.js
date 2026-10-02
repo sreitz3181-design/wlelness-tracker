@@ -1,14 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, SectionLabel } from '../../components/ui'
-import DateNav from '../../components/DateNav'
 import { supabase } from '../../lib/supabaseClient'
-import { todayISO, yesterdayISO, parseISODate } from '../../lib/dates'
-import { useLogDate } from '../../lib/useLogDate'
+import { todayISO } from '../../lib/dates'
 import {
   getCurrentUserId,
-  saveDayFields,
+  saveTodayFields,
   defaultWorkoutType,
   getUserSettings,
   saveUserSettings,
@@ -32,9 +30,6 @@ const CARDIO_RECOMMENDATION = {
 }
 
 export default function WorkoutPage() {
-  const [date, setDate] = useLogDate() // the day being viewed; null until mounted
-  const dateRef = useRef(null)
-  dateRef.current = date
   const [userId, setUserId] = useState(null)
   const [log, setLog] = useState(null)
   const [settings, setSettings] = useState(null)
@@ -46,51 +41,42 @@ export default function WorkoutPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!date) return
-    let cancelled = false
-
     async function load() {
-      setLoading(true)
       const uid = await getCurrentUserId()
       setUserId(uid)
-      if (!uid || cancelled) return
+      if (!uid) return
 
       const [{ data }, userSettings] = await Promise.all([
-        supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', date).maybeSingle(),
+        supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
         getUserSettings(uid),
       ])
-      if (cancelled) return
 
-      const type = data?.workout_type || defaultWorkoutType(parseISODate(date))
+      const type = data?.workout_type || defaultWorkoutType()
       setLog({ ...(data || {}), workout_type: type })
       setSettings(userSettings)
-      setEncouragement('')
-      setGenError('')
-      setExercises(
-        type === 'strength' && data?.workout_planned?.length
-          ? data.workout_planned.map((p, i) => ({
-              name: p.name,
-              planned: p.planned,
-              actual: data.workout_actual?.[i]?.actual || '',
-            }))
-          : [{ name: '', planned: '', actual: '' }]
-      )
-      setCardioActual(
-        type === 'cardio' && data?.workout_actual && !Array.isArray(data.workout_actual)
-          ? { duration: data.workout_actual.duration ?? '', effort: data.workout_actual.effort ?? '' }
-          : { duration: '', effort: '' }
-      )
+      if (type === 'strength' && data?.workout_planned?.length) {
+        setExercises(
+          data.workout_planned.map((p, i) => ({
+            name: p.name,
+            planned: p.planned,
+            actual: data.workout_actual?.[i]?.actual || '',
+          }))
+        )
+      }
+      if (type === 'cardio' && data?.workout_actual && !Array.isArray(data.workout_actual)) {
+        setCardioActual({
+          duration: data.workout_actual.duration ?? '',
+          effort: data.workout_actual.effort ?? '',
+        })
+      }
       setLoading(false)
     }
     load()
-    return () => {
-      cancelled = true
-    }
-  }, [date])
+  }, [])
 
   async function setType(type) {
     setLog((prev) => ({ ...prev, workout_type: type }))
-    await saveDayFields(userId, { workout_type: type }, date)
+    await saveTodayFields(userId, { workout_type: type })
   }
 
   function updateExercise(i, key, value) {
@@ -104,11 +90,10 @@ export default function WorkoutPage() {
   async function saveExercises() {
     const planned = exercises.map((e) => ({ name: e.name, planned: e.planned }))
     const actual = exercises.map((e) => ({ name: e.name, actual: e.actual }))
-    await saveDayFields(userId, { workout_planned: planned, workout_actual: actual }, date)
+    await saveTodayFields(userId, { workout_planned: planned, workout_actual: actual })
   }
 
   async function generateWorkout() {
-    const forDate = date
     setGenerating(true)
     setGenError('')
     try {
@@ -126,18 +111,12 @@ export default function WorkoutPage() {
         planned: `${e.sets} x ${e.reps} @ ${e.weight}`,
         actual: '',
       }))
-      if (dateRef.current === forDate) {
-        setExercises(next)
-        setEncouragement(data.encouragement || '')
-      }
-      await saveDayFields(
-        userId,
-        {
-          workout_planned: next.map((e) => ({ name: e.name, planned: e.planned })),
-          workout_actual: next.map((e) => ({ name: e.name, actual: '' })),
-        },
-        forDate
-      )
+      setExercises(next)
+      setEncouragement(data.encouragement || '')
+      await saveTodayFields(userId, {
+        workout_planned: next.map((e) => ({ name: e.name, planned: e.planned })),
+        workout_actual: next.map((e) => ({ name: e.name, actual: '' })),
+      })
     } catch (err) {
       setGenError('Could not generate a workout — you can still fill in exercises manually below.')
     } finally {
@@ -148,23 +127,21 @@ export default function WorkoutPage() {
   async function saveCardioActual(field, value) {
     const next = { ...cardioActual, [field]: value }
     setCardioActual(next)
-    await saveDayFields(userId, { workout_actual: next }, date)
+    await saveTodayFields(userId, { workout_actual: next })
   }
 
   async function saveGoalField(field, value) {
     setLog((prev) => ({ ...prev, [field]: value }))
-    await saveDayFields(userId, { [field]: value === '' ? null : Number(value) }, date)
+    await saveTodayFields(userId, { [field]: value === '' ? null : Number(value) })
   }
 
   async function rateDifficulty(rating) {
     setLog((prev) => ({ ...prev, workout_difficulty: rating }))
-    await saveDayFields(userId, { workout_difficulty: rating }, date)
+    await saveTodayFields(userId, { workout_difficulty: rating })
 
     // While restricted, the rating is still recorded for the record, but
     // it never moves the intensity level — that stays locked to 'light'.
-    // Ratings for days older than yesterday are also record-only, so
-    // catching up on a week of workouts can't step the level seven times.
-    if (restricted || log?.workout_type === 'rest' || date < yesterdayISO()) return
+    if (restricted || log?.workout_type === 'rest') return
 
     const field = log?.workout_type === 'strength' ? 'strength_intensity' : 'cardio_effort'
     const nextLevel = stepLevel(settings[field], rating)
@@ -172,17 +149,8 @@ export default function WorkoutPage() {
     await saveUserSettings(userId, { [field]: nextLevel })
   }
 
-  if (!date) return <main className="px-4 pt-8 text-sm text-ink/40">Loading…</main>
-  if (loading || !settings) {
-    return (
-      <main className="px-4 pt-8">
-        <DateNav date={date} onChange={setDate} />
-        <p className="mt-6 text-sm text-ink/40">Loading workout…</p>
-      </main>
-    )
-  }
+  if (loading || !settings) return <main className="px-4 pt-8 text-sm text-ink/40">Loading today&rsquo;s workout…</main>
 
-  const isToday = date === todayISO()
   const restricted = isRestricted(settings)
   const currentLevel = restricted
     ? 'light'
@@ -192,10 +160,7 @@ export default function WorkoutPage() {
 
   return (
     <main className="px-4 pt-8">
-      <DateNav date={date} onChange={setDate} />
-      <p className="mt-4 text-xs uppercase tracking-wide text-ink/40">
-        {isToday ? 'Today\u2019s Scheduled Workout' : 'Workout'}
-      </p>
+      <p className="text-xs uppercase tracking-wide text-ink/40">Today&rsquo;s Scheduled Workout</p>
       <h1 className="font-display text-2xl">
         Category:{' '}
         <span className="text-sage-dark capitalize">{log?.workout_type}</span>
@@ -277,7 +242,7 @@ export default function WorkoutPage() {
 
       {log?.workout_type === 'cardio' && (
         <Card className="mt-5">
-          <SectionLabel>{isToday ? 'Today\u2019s cardio' : 'Cardio'}</SectionLabel>
+          <SectionLabel>Today&rsquo;s cardio</SectionLabel>
           <p className="text-sm text-ink/70">
             Recommended: <span className="font-semibold text-dusk">{CARDIO_RECOMMENDATION[currentLevel].duration} min</span>{' '}
             at <span className="font-semibold text-dusk">{CARDIO_RECOMMENDATION[currentLevel].effort}</span> effort
@@ -328,8 +293,6 @@ export default function WorkoutPage() {
           <p className="mt-2 text-xs text-ink/40">
             {restricted
               ? 'Recorded — intensity stays light while restricted.'
-              : date < yesterdayISO()
-              ? 'Recorded — ratings older than yesterday don\u2019t change your intensity level.'
               : 'Feeds directly into your next scheduled workout of this type.'}
           </p>
         </Card>

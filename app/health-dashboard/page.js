@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Card, SectionLabel, StatPill } from '../../components/ui'
 import { supabase } from '../../lib/supabaseClient'
-import { mondayOfWeekISO, todayISO } from '../../lib/dates'
+import { planningWeekStart, todayISO } from '../../lib/dates'
 import { getCurrentUserId, getLatestWeight, defaultWorkoutType } from '../../lib/dailyLog'
 import { computeCalorieTargets } from '../../lib/calorieTargets'
 import { authedFetch } from '../../lib/apiFetch'
@@ -52,7 +52,7 @@ export default function HealthDashboardPage() {
         .from('weekly_reviews')
         .select('*')
         .eq('user_id', uid)
-        .eq('week_start', mondayOfWeekISO())
+        .eq('week_start', planningWeekStart())
         .maybeSingle()
       if (savedReview) setReview(savedReview)
     }
@@ -72,7 +72,7 @@ export default function HealthDashboardPage() {
     setReviewLoading(true)
     setReviewError('')
     try {
-      const weekStart = mondayOfWeekISO()
+      const weekStart = planningWeekStart()
       const [{ data: weekRows }, weight, { data: weighIns }, { data: openTasks }] = await Promise.all([
         supabase.from('daily_logs').select('*').eq('user_id', userId).gte('log_date', weekStart).lte('log_date', todayISO()),
         getLatestWeight(userId),

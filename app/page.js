@@ -1,12 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Card, SectionLabel, RatingScale } from '../components/ui'
-import DateNav from '../components/DateNav'
 import { supabase } from '../lib/supabaseClient'
-import { todayISO, mondayOfWeekISO, parseISODate, addDaysISO } from '../lib/dates'
-import { useLogDate } from '../lib/useLogDate'
+import { todayISO, sermonWeekStart } from '../lib/dates'
 import { referenceForDate } from '../lib/scriptureReferences'
 import { authedFetch } from '../lib/apiFetch'
 
@@ -25,11 +23,8 @@ function sortTasks(list) {
 }
 
 export default function DailyTaskPage() {
-  const [date, setDate] = useLogDate() // the day being viewed; null until mounted
-  const dateRef = useRef(null)
-  dateRef.current = date
   const [userId, setUserId] = useState(null)
-  const [today, setToday] = useState(null) // the daily_logs row for `date`
+  const [today, setToday] = useState(null)
   const [tasks, setTasks] = useState([])
   const [newTask, setNewTask] = useState('')
   const [newTaskDue, setNewTaskDue] = useState('')
@@ -49,22 +44,23 @@ export default function DailyTaskPage() {
   const [stressReflectionLoading, setStressReflectionLoading] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!date) return
-    let cancelled = false
+  const dateLabel = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
 
+  useEffect(() => {
     async function load() {
-      setLoading(true)
       const { data: userData } = await supabase.auth.getUser()
       const uid = userData?.user?.id
-      if (!uid || cancelled) return
+      if (!uid) return
       setUserId(uid)
 
       const [{ data: t }, { data: taskRows }] = await Promise.all([
-        supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', date).maybeSingle(),
+        supabase.from('daily_logs').select('*').eq('user_id', uid).eq('log_date', todayISO()).maybeSingle(),
         supabase.from('tasks').select('*').eq('user_id', uid).eq('completed', false).limit(20),
       ])
-      if (cancelled) return
 
       setToday(t)
       setTasks(sortTasks(taskRows || []))
@@ -75,42 +71,30 @@ export default function DailyTaskPage() {
         mental_health_helpers: t?.mental_health_helpers || '',
         additional_share: t?.additional_share || '',
       })
-      setJournalSaved(false)
       setJournalFeedback(t?.mental_health_feedback || '')
       setReflectionResponse(t?.spiritual_reflection_response || '')
-      setReflectionSaved(false)
-      setStressReflection(
-        t?.stress_based_reflection
-          ? { encouragement: t.stress_based_reflection, reference: t.stress_based_reference }
-          : null
-      )
+      if (t?.stress_based_reflection) {
+        setStressReflection({ encouragement: t.stress_based_reflection, reference: t.stress_based_reference })
+      }
 
       if (t?.spiritual_reflection_question) {
         setReflection({ reflectionQuestion: t.spiritual_reflection_question, loveReminder: t.daily_love_reminder, reference: t.daily_love_reference })
       } else {
-        setReflection(null)
-        // Today's reflection is prepared automatically; for a past day it is
-        // offered as a button instead, so browsing back never spends an AI
-        // call the person didn't ask for.
-        if (date === todayISO()) generateReflection(uid, date)
+        generateReflection(uid)
       }
 
       setLoading(false)
     }
     load()
-    return () => {
-      cancelled = true
-    }
-  }, [date])
+  }, [])
 
-  // Upserts one field on the log row for the viewed day (or `forDate`, for
-  // work that started on another day), creating it on first write.
-  async function saveField(field, value, forDate = date) {
-    if (!userId || !forDate) return
-    if (forDate === dateRef.current) setToday((prev) => ({ ...(prev || {}), [field]: value }))
+  // Upserts one field on today's log row, creating it on first write.
+  async function saveField(field, value) {
+    if (!userId) return
+    setToday((prev) => ({ ...(prev || {}), [field]: value }))
     await supabase
       .from('daily_logs')
-      .upsert({ user_id: userId, log_date: forDate, [field]: value }, { onConflict: 'user_id,log_date' })
+      .upsert({ user_id: userId, log_date: todayISO(), [field]: value }, { onConflict: 'user_id,log_date' })
   }
 
   async function saveStressNote() {
@@ -127,7 +111,7 @@ export default function DailyTaskPage() {
     setToday((prev) => ({ ...(prev || {}), ...journal }))
     await supabase
       .from('daily_logs')
-      .upsert({ user_id: userId, log_date: date, ...journal }, { onConflict: 'user_id,log_date' })
+      .upsert({ user_id: userId, log_date: todayISO(), ...journal }, { onConflict: 'user_id,log_date' })
     setJournalSaved(true)
     setTimeout(() => setJournalSaved(false), 2500)
   }
@@ -139,7 +123,6 @@ export default function DailyTaskPage() {
   }
 
   async function getStressReflection() {
-    const forDate = date
     setStressReflectionLoading(true)
     try {
       const res = await authedFetch('/api/stress-reflection', {
@@ -155,15 +138,13 @@ export default function DailyTaskPage() {
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
-      if (dateRef.current === forDate) setStressReflection({ encouragement: data.encouragement, reference: data.reference })
+      setStressReflection({ encouragement: data.encouragement, reference: data.reference })
       await Promise.all([
-        saveField('stress_based_reflection', data.encouragement, forDate),
-        saveField('stress_based_reference', data.reference, forDate),
+        saveField('stress_based_reflection', data.encouragement),
+        saveField('stress_based_reference', data.reference),
       ])
     } catch (err) {
-      if (dateRef.current === forDate) {
-        setStressReflection({ encouragement: 'Could not generate this right now — try again in a moment.', reference: '' })
-      }
+      setStressReflection({ encouragement: 'Could not generate this right now — try again in a moment.', reference: '' })
     } finally {
       setStressReflectionLoading(false)
     }
@@ -204,17 +185,15 @@ export default function DailyTaskPage() {
   }
 
   async function getJournalFeedback() {
-    const forDate = date
     setJournalLoading(true)
     try {
-      // The 7 days ending on the viewed day, so feedback on a past entry
-      // looks at the days around it rather than the last week.
+      const since = new Date()
+      since.setDate(since.getDate() - 6)
       const { data: recentHistory } = await supabase
         .from('daily_logs')
         .select('log_date, stress_rating, stress_cause, stress_helped')
         .eq('user_id', userId)
-        .gte('log_date', addDaysISO(forDate, -6))
-        .lte('log_date', forDate)
+        .gte('log_date', since.toISOString().slice(0, 10))
         .order('log_date', { ascending: false })
 
       const res = await authedFetch('/api/journal-feedback', {
@@ -232,27 +211,26 @@ export default function DailyTaskPage() {
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
-      if (dateRef.current === forDate) setJournalFeedback(data.feedback)
-      await saveField('mental_health_feedback', data.feedback, forDate)
+      setJournalFeedback(data.feedback)
+      await saveField('mental_health_feedback', data.feedback)
     } catch (err) {
-      if (dateRef.current === forDate) setJournalFeedback('Could not generate feedback right now — your entry is still saved.')
+      setJournalFeedback('Could not generate feedback right now — your entry is still saved.')
     } finally {
       setJournalLoading(false)
     }
   }
 
-  async function generateReflection(uid, forDate) {
+  async function generateReflection(uid) {
     setReflectionLoading(true)
     try {
-      const day = parseISODate(forDate)
       const { data: sermon } = await supabase
         .from('sermon_notes')
         .select('raw_notes')
         .eq('user_id', uid)
-        .eq('week_start', mondayOfWeekISO(day))
+        .eq('week_start', sermonWeekStart())
         .maybeSingle()
 
-      const { ref, theme } = referenceForDate(day)
+      const { ref, theme } = referenceForDate()
       const res = await authedFetch('/api/daily-reflection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -261,49 +239,34 @@ export default function DailyTaskPage() {
       const data = await res.json()
       if (data.error) throw new Error(data.error)
 
-      if (dateRef.current === forDate) {
-        setReflection({ reflectionQuestion: data.reflectionQuestion, loveReminder: data.loveReminder, reference: ref })
-      }
+      setReflection({ reflectionQuestion: data.reflectionQuestion, loveReminder: data.loveReminder, reference: ref })
       await Promise.all([
-        saveField('spiritual_reflection_question', data.reflectionQuestion, forDate),
-        saveField('daily_love_reminder', data.loveReminder, forDate),
-        saveField('daily_love_reference', ref, forDate),
+        saveField('spiritual_reflection_question', data.reflectionQuestion),
+        saveField('daily_love_reminder', data.loveReminder),
+        saveField('daily_love_reference', ref),
       ])
     } catch (err) {
-      if (dateRef.current === forDate) setReflection(null)
+      setReflection(null)
     } finally {
       setReflectionLoading(false)
     }
   }
 
-  if (!date) {
-    return <main className="px-4 pt-8 text-sm text-ink/40">Loading…</main>
-  }
-
   if (loading) {
-    return (
-      <main className="px-4 pt-8">
-        <DateNav date={date} onChange={setDate} />
-        <p className="mt-6 text-sm text-ink/40">Loading…</p>
-      </main>
-    )
+    return <main className="px-4 pt-8 text-sm text-ink/40">Loading today…</main>
   }
 
-  const isToday = date === todayISO()
-  const dayWord = isToday ? 'today' : 'that day'
-  const dayPoss = isToday ? 'today\u2019s' : 'this day\u2019s'
-  const withDate = (path) => (isToday ? path : `${path}?date=${date}`)
   const showStressFollowUp = today?.stress_rating >= 4
 
   return (
     <main className="px-4 pt-8">
       <div className="rhythm-arc mb-6 h-1 w-16 rounded-full" />
-      <DateNav date={date} onChange={setDate} />
-      <h1 className="mt-3 font-display text-2xl">{isToday ? 'Hello' : 'Catching up'}</h1>
+      <p className="text-xs uppercase tracking-wide text-ink/40">{dateLabel}</p>
+      <h1 className="font-display text-2xl">Hello</h1>
 
       <Card className="mt-5">
         <SectionLabel>Spiritual health</SectionLabel>
-        {reflectionLoading && !reflection && <p className="text-sm text-ink/40">Preparing the reflection…</p>}
+        {reflectionLoading && !reflection && <p className="text-sm text-ink/40">Preparing today&rsquo;s reflection…</p>}
         {reflection && (
           <>
             <p className="text-sm text-ink/80">{reflection.loveReminder}</p>
@@ -329,20 +292,12 @@ export default function DailyTaskPage() {
             </div>
           </>
         )}
-        {!reflection && !reflectionLoading &&
-          (isToday ? (
-            <p className="text-sm text-ink/40">Couldn&rsquo;t load today&rsquo;s reflection — try refreshing.</p>
-          ) : (
-            <button
-              onClick={() => generateReflection(userId, date)}
-              className="rounded-card bg-dusk px-3 py-1.5 text-xs font-semibold text-paper"
-            >
-              Prepare a reflection for this day
-            </button>
-          ))}
+        {!reflection && !reflectionLoading && (
+          <p className="text-sm text-ink/40">Couldn&rsquo;t load today&rsquo;s reflection — try refreshing.</p>
+        )}
 
         <div className="mt-4 border-t border-sage-light pt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink/40">Based on {dayPoss} journal</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/40">Based on today&rsquo;s journal</p>
           <p className="mt-1 text-xs text-ink/40">
             Optional — a biblical encouragement responding to what you write below in the mental health journal.
           </p>
@@ -404,7 +359,7 @@ export default function DailyTaskPage() {
         <SectionLabel>Mental health journal</SectionLabel>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-ink/50">What is causing you stress {dayWord}?</label>
+            <label className="text-xs text-ink/50">What is causing you stress today?</label>
             <textarea
               value={journal.stress_cause}
               onChange={(e) => updateJournal('stress_cause', e.target.value)}
@@ -413,7 +368,7 @@ export default function DailyTaskPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-ink/50">What is helping with your stress level {dayWord}?</label>
+            <label className="text-xs text-ink/50">What is helping with your stress level today?</label>
             <textarea
               value={journal.stress_helped}
               onChange={(e) => updateJournal('stress_helped', e.target.value)}
@@ -422,7 +377,7 @@ export default function DailyTaskPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-ink/50">What things are helping your mental health {dayWord}?</label>
+            <label className="text-xs text-ink/50">What things are helping your mental health today?</label>
             <textarea
               value={journal.mental_health_helpers}
               onChange={(e) => updateJournal('mental_health_helpers', e.target.value)}
@@ -431,7 +386,7 @@ export default function DailyTaskPage() {
             />
           </div>
           <div>
-            <label className="text-xs text-ink/50">Is there anything else you want to share {dayWord}?</label>
+            <label className="text-xs text-ink/50">Is there anything else you want to share today?</label>
             <textarea
               value={journal.additional_share}
               onChange={(e) => updateJournal('additional_share', e.target.value)}
@@ -550,15 +505,18 @@ export default function DailyTaskPage() {
         </div>
       </Card>
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        <Link href={withDate('/workout')} className="rounded-card bg-sage py-3 text-center text-xs font-semibold text-paper">
-          {isToday ? 'Today\u2019s Workout' : 'Workout'}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <Link href="/workout" className="rounded-card bg-sage py-3 text-center text-xs font-semibold text-paper">
+          Today&rsquo;s Workout
         </Link>
         <Link href="/health-dashboard" className="rounded-card bg-dusk py-3 text-center text-xs font-semibold text-paper">
           Health Stats
         </Link>
-        <Link href={withDate('/nutrition')} className="rounded-card bg-amber py-3 text-center text-xs font-semibold text-paper">
+        <Link href="/nutrition" className="rounded-card bg-amber py-3 text-center text-xs font-semibold text-paper">
           Log Nutrition
+        </Link>
+        <Link href="/grocery-list" className="rounded-card bg-sage-dark py-3 text-center text-xs font-semibold text-paper">
+          Grocery List
         </Link>
       </div>
     </main>

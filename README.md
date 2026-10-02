@@ -2,7 +2,7 @@
 
 A personal physical/mental/spiritual health tracker — Next.js + Supabase + the Anthropic API, matching the six screens sketched in the rough wireframes (Weekly Planner, Daily Task, Strength/Cardio Workout, Nutrition, Health Dashboard).
 
-All screens run on live Supabase data behind a single-user login (see the numbered notes below). `lib/mockData.js` is now only a fallback: the Weekly Planner uses its placeholder recipe list until the `recipes` table is seeded.
+Every page currently renders from `lib/mockData.js` so you can see the real layout before wiring up a database. Nothing here talks to a live backend yet.
 
 ## Run it locally
 
@@ -78,47 +78,28 @@ Palette and type are in `tailwind.config.js` and `app/globals.css`:
     - Sends come from Resend's shared `onboarding@resend.dev` address, which works immediately with no domain setup — verify a custom domain in Resend later if you want the "from" address to look more polished.
 34. **Run `supabase/migration_8_grocery_list.sql`** — adds the `grocery_items` table.
 35. **New: Grocery List screen** (`/grocery-list`), reached from the Weekly Planner once a shopping list exists. Items from "Generate shopping list" are automatically sorted into Produce / Bakery / Meat / Grocery / Frozen / Dairy / Personal Hygiene / Household (plus an Other bucket, hidden when empty) via `/api/categorize-groceries`. Checking an item off removes it from view immediately rather than just marking it done — a single **Undo last check-off** button reverses the most recent one if you tap the wrong item, holding up to the last 10. Each category has its own "Add to [category]" input for anything not on a recipe (paper towels, toothpaste, etc.) — those manual additions are never touched when you regenerate the list from a new week's plan; only the previously auto-generated items get replaced. Built mobile-first: full-width tap targets, one column, no dense table layout.
-36. **Google Calendar integration was tried and removed** (it didn't work reliably enough to justify the setup complexity). Its routes, helper files and `migration_9_google_calendar.sql` are deleted from the repo, and the `google_calendar_connections` table is dropped (`drop table if exists google_calendar_connections;`). Nothing else in the app needs a Google or service-role key.
+36. **Run `supabase/migration_9_google_calendar.sql`** if you ran it previously — that table can be dropped now, since the Google Calendar integration was tried and then removed (didn't work reliably enough to justify the setup complexity). Optional cleanup: `drop table if exists google_calendar_connections;`
 37. **All 8 Anthropic-backed API routes now require a real login.** `generate-workout`, `journal-feedback`, `daily-reflection`, `stress-reflection`, `suggest-meals`, `weekly-review`, `estimate-nutrition`, and `categorize-groceries` all check for a valid Supabase session (via `lib/verifyAuth.js`) before calling Anthropic, returning 401 otherwise. **Why this mattered:** these routes previously accepted any request with no check at all — anyone who discovered the endpoint URLs (trivial, since they're visible in the browser's network tab) could call them directly and run up your Anthropic bill without ever touching your login screen. Since this app has exactly one real account and no public sign-up path, "is there a genuine logged-in session at all" is a complete fix — no per-user logic needed. Every client-side call to these routes now goes through `lib/apiFetch.js`'s `authedFetch()`, which attaches the current session's token automatically.
 38. **Also recommended, done outside the codebase:** a monthly spend limit set directly in the Anthropic Console (platform.claude.com → Settings → Billing), with alerts at 50%/80%. This is a hard stop independent of any code — worth having regardless of anything above, since it protects against literally any runaway scenario (a bug, a future exploit, anything), not just this specific one.
-
-39. **Run `supabase/migration_10_grocery_quantity.sql`** — adds `quantity` and `unit` columns to `grocery_items` (existing rows get quantity 1). Run it *before* deploying the matching code.
-40. **Grocery List: combined duplicates, quantities, and editing.**
-    - **Generating the list now combines items.** Each ingredient is read as quantity + unit + name (`lib/groceryCombine.js`), so "2 Chicken Breast" + "4 Chicken Breast" + "2 Chicken Breasts" becomes one "8 Chicken Breast" line. An ingredient with no number counts as 1 each time it appears (three recipes using Shredded Colby Jack Cheese give "3 Shredded Colby Jack Cheese"). Matching ignores case and plurals, and never adds different units together ("2 lb" and "3 cans" stay separate lines).
-    - **AI only matches names, code does the math.** `/api/categorize-groceries` now also returns groups of names that are the same thing to buy (e.g. "Carb Friendly Tortillas" and "Carb Friendly Tortillas (Large)"), and the quantities are still summed in code. It is told to leave different forms alone (fresh vs. frozen broccoli) and to skip anything it is unsure about.
-    - **Quantity on every item**, shown next to the name. Adding an item by hand understands a leading number and unit ("2 avocados", "1.5 lb ground turkey"); if it matches something already on the list, that line's quantity goes up instead of adding a duplicate.
-    - **Edit button on every item** — change name, quantity, unit, or category, or delete it.
-    - **"Combine duplicates" button** on the Grocery List screen runs the same merge over the whole current list, including items added by hand. Merged lines that include anything added by hand stay marked as manual, so regenerating the plan's list can't wipe them out.
-    - Regenerating the list now adds the new items before removing the old generated ones, so a failed update can't leave the list empty; if it fails, a message on the Weekly Planner says so.
-
-41. **Go back to previous days on Today, Workout, and Nutrition.** Each of those screens now has a date bar at the top: ‹ / › step one day, tapping the date opens a date picker, and a banner says "Viewing a past day — entries save to this date" with a Back to today button. Future days aren't allowed. The chosen day lives in the URL (`?date=2026-09-17`), and the Today screen's Workout and Nutrition buttons carry it along; the bottom nav always opens today. Everything on those screens loads and saves for the chosen day: sleep and stress, the mental health journal, the spiritual reflection, workout type/exercises/cardio/goals/rating, meals, water, and medication check-offs. (The Tasks list is not tied to a day.) No database changes.
-    - A past day's spiritual reflection is not generated automatically — there's a "Prepare a reflection for this day" button instead, so browsing back never spends an AI call you didn't ask for. Journal feedback looks at the 7 days ending on the viewed day.
-    - A "how was this workout?" rating steps the intensity level only for today or yesterday. Older ratings are recorded but don't change it, so catching up on a week of workouts can't step the level seven times.
-    - **Date bug fixed:** dates used to be built from the UTC date, so after about 7 PM Central the app thought it was already tomorrow (and the "Monday of this week" key came out as Tuesday), filing evening entries under the wrong day and evening plans under the wrong week. `lib/dates.js` now uses the local date everywhere.
+39. **Fixed the "week" anchor to match the actual planning rhythm.** `weekly_plans` and `weekly_reviews` used to key off the Monday of the current calendar week, recomputed fresh on every page load. That broke down specifically because meal planning happens on Fridays, for the week ahead: a plan entered Friday saved under that week's Monday, but by the time Monday actually arrived, every page recomputed "this week" and landed on the *next* Monday — a different, empty record. `lib/dates.js`'s `planningWeekStart()` (replacing the old `mondayOfWeekISO()`) now anchors to **the most recent Friday on or before today**, so a plan made on a Friday stays the active one through the following Thursday. No data migration needed — old Monday-keyed rows just become unreachable going forward, same as any date naturally rolling out of range.
+40. **Sermon Notes got its own separate week anchor — Sunday through Saturday, not Friday through Thursday.** `sermon_notes` now uses a distinct function, `sermonWeekStart()`, deliberately different from `planningWeekStart()` — matching when a sermon is actually heard and reflected on, independent of the meal-planning cycle. The Weekly Planner's sermon notes section shows its own "Week of [date] (Sunday–Saturday)" label so it's visually clear the two weeks don't line up with each other.
+41. **Grocery List is now reachable directly from the Today screen**, not just through the Weekly Planner — a fourth quick-link button alongside Workout/Health Stats/Nutrition (now a 2×2 grid instead of 3 across). The screen itself was always usable standalone (add items per category anytime, independent of whether a shopping list's been generated), this just makes it quicker to get to during the week.
 
 ## Structure
 
 ```
 app/
-  page.js                  Today — scripture, journal, tasks, spiritual reflection
+  page.js                 Today (Daily Task) — scripture, yesterday's ratings, tasks
   workout/page.js          Strength/Cardio, planned vs. actual, daily health goals
-  nutrition/page.js        Meals by category + water, medications check-off
-  weekly-planner/page.js   Meal slots → shopping list, sermon notes, weigh-ins, medications setup
-  library/page.js          Meal Library (recipes by category)
-  grocery-list/page.js     Categorized grocery list with undo
-  health-dashboard/page.js Week/month averages + weekly review
-  login/page.js            Single-user Supabase login
-  api/                     Anthropic-backed routes (login required) and Vercel cron routes
+  nutrition/page.js        Calories by meal + water, goal vs. actual
+  weekly-planner/page.js   7-meal picker → shopping list, calendar, sermon notes upload
+  health-dashboard/page.js Week/month toggle, averages across all five metrics
 components/
-  AuthGate.js, DateNav.js, NavBar.js, ui.js
+  NavBar.js                Bottom tab nav (mobile-first)
+  ui.js                    Card, RatingScale, PlannedActualRow, StatPill
 lib/
-  apiFetch.js, verifyAuth.js   Authenticated API calls / server-side session check
-  supabaseClient.js            Supabase client
-  calorieTargets.js, dailyLog.js, dates.js, email.js, groceryCombine.js, mealLibrary.js,
-  useLogDate.js,
-  scriptureReferences.js, mockData.js
+  mockData.js               Placeholder data — replace with Supabase queries
+  supabaseClient.js         Supabase client (needs env vars to do anything)
 supabase/
-  schema.sql               Base schema + RLS policies
-  migration_2 … migration_10 Run in order as described above
-  seed_recipes.sql         Starter recipes
+  schema.sql                Full schema + RLS policies
 ```
