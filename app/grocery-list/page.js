@@ -13,6 +13,8 @@ export default function GroceryListPage() {
   const [items, setItems] = useState([])
   const [undoStack, setUndoStack] = useState([])
   const [newItemText, setNewItemText] = useState({})
+  const [editingId, setEditingId] = useState(null)
+  const [editValue, setEditValue] = useState('')
   const [loading, setLoading] = useState(true)
   const weekStart = planningWeekStart()
 
@@ -46,6 +48,23 @@ export default function GroceryListPage() {
     setUndoStack((prev) => prev.slice(0, -1))
     setItems((prev) => [...prev, item])
     await supabase.from('grocery_items').update({ checked: false }).eq('id', item.id)
+  }
+
+  function startEdit(item) {
+    setEditingId(item.id)
+    setEditValue(item.name)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function saveEdit(id) {
+    const name = editValue.trim()
+    if (!name) return
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, name } : i)))
+    setEditingId(null)
+    await supabase.from('grocery_items').update({ name }).eq('id', id)
   }
 
   async function addItem(category) {
@@ -96,17 +115,39 @@ export default function GroceryListPage() {
               <p className="text-xs text-ink/30">Nothing here.</p>
             ) : (
               <ul className="divide-y divide-sage-light">
-                {group.items.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      onClick={() => checkOff(item)}
-                      className="flex w-full items-center gap-3 py-3 text-left"
-                    >
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 border-sage-light" />
-                      <span className="text-sm text-ink">{item.name}</span>
-                    </button>
-                  </li>
-                ))}
+                {group.items.map((item) =>
+                  editingId === item.id ? (
+                    <li key={item.id} className="py-3">
+                      <input
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && saveEdit(item.id)}
+                        autoFocus
+                        className="w-full rounded-card border border-sage-light bg-white/70 px-3 py-1.5 text-sm"
+                      />
+                      <div className="mt-2 flex gap-2">
+                        <button onClick={() => saveEdit(item.id)} className="flex-1 rounded-card bg-sage py-1.5 text-xs font-semibold text-paper">
+                          Save
+                        </button>
+                        <button onClick={cancelEdit} className="flex-1 rounded-card bg-sage-light py-1.5 text-xs font-semibold text-sage-dark">
+                          Cancel
+                        </button>
+                      </div>
+                    </li>
+                  ) : (
+                    <li key={item.id} className="py-3">
+                      <p className="text-sm text-ink">{item.name}</p>
+                      <div className="mt-2 flex gap-2">
+                        <button onClick={() => checkOff(item)} className="flex-1 rounded-card bg-sage py-1.5 text-xs font-semibold text-paper">
+                          Got it
+                        </button>
+                        <button onClick={() => startEdit(item)} className="flex-1 rounded-card bg-sage-light py-1.5 text-xs font-semibold text-sage-dark">
+                          Edit
+                        </button>
+                      </div>
+                    </li>
+                  )
+                )}
               </ul>
             )}
             <div className="mt-2 flex gap-2">
