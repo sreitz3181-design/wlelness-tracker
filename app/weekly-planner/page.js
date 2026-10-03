@@ -237,9 +237,11 @@ export default function WeeklyPlannerPage() {
       { onConflict: 'user_id,week_start' }
     )
 
-    // Categorize and push into the Grocery List screen. Replaces only
-    // this week's previously *generated* items — anything added manually
-    // there is left untouched.
+    // Categorize and ADD to the Grocery List screen. This only ever adds —
+    // it never deletes or clears anything. The only way an item leaves the
+    // list is by being checked off. To avoid duplicates when regenerating,
+    // anything already sitting unchecked on the list, or already checked off
+    // during this planning week, is skipped (matched by name, ignoring case).
     try {
       const res = await authedFetch('/api/categorize-groceries', {
         method: 'POST',
@@ -248,16 +250,27 @@ export default function WeeklyPlannerPage() {
       })
       const data = await res.json()
       if (!data.error && data.categorized?.length) {
-        await supabase.from('grocery_items').delete().eq('user_id', userId).eq('week_start', weekStart).eq('source', 'generated')
-        await supabase.from('grocery_items').insert(
-          data.categorized.map((c) => ({
-            user_id: userId,
-            week_start: weekStart,
-            category: c.category,
-            name: c.name,
-            source: 'generated',
-          }))
+        const { data: existing } = await supabase
+          .from('grocery_items')
+          .select('name, checked, week_start')
+          .eq('user_id', userId)
+        const alreadyHandled = new Set(
+          (existing || [])
+            .filter((row) => !row.checked || row.week_start === weekStart)
+            .map((row) => row.name.trim().toLowerCase())
         )
+        const toAdd = data.categorized.filter((c) => !alreadyHandled.has(c.name.trim().toLowerCase()))
+        if (toAdd.length > 0) {
+          await supabase.from('grocery_items').insert(
+            toAdd.map((c) => ({
+              user_id: userId,
+              week_start: weekStart,
+              category: c.category,
+              name: c.name,
+              source: 'generated',
+            }))
+          )
+        }
       }
     } catch (err) {
       // Grocery List categorization is a nice-to-have on top of the plain

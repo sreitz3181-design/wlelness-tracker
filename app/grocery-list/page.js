@@ -27,7 +27,6 @@ export default function GroceryListPage() {
         .from('grocery_items')
         .select('*')
         .eq('user_id', uid)
-        .eq('week_start', weekStart)
         .eq('checked', false)
         .order('created_at', { ascending: true })
       setItems(data || [])
@@ -88,7 +87,7 @@ export default function GroceryListPage() {
 
   return (
     <main className="px-4 pt-8 pb-8">
-      <p className="text-xs uppercase tracking-wide text-ink/40">Week of {weekStart}</p>
+      <p className="text-xs uppercase tracking-wide text-ink/40">Stays until checked off</p>
       <h1 className="font-display text-2xl">Grocery List</h1>
 
       {undoStack.length > 0 && (
